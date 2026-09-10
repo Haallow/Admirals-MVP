@@ -482,7 +482,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8e8debe1e4251114480f9c5262a70181, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GridManager
-  width: 14
+  width: 10
   height: 10
   cellSize: 1
   testShip:
@@ -494,15 +494,6 @@ MonoBehaviour:
     - {x: 0, y: 0}
     - {x: 1, y: 0}
     - {x: 2, y: 0}
-    maxHealth: 100
-    currentHealth: 0
-    armor: 0
-    currentDomain: 0
-    weapons: []
-    defenses: []
-    visionLayers: []
-    weaponCharges: []
-    defenseCharges: []
   obstructionShip:
     owner: 0
     anchor: {x: 0, y: 0}
@@ -512,15 +503,6 @@ MonoBehaviour:
     - {x: 0, y: 0}
     - {x: 1, y: 0}
     - {x: 2, y: 0}
-    maxHealth: 100
-    currentHealth: 0
-    armor: 0
-    currentDomain: 0
-    weapons: []
-    defenses: []
-    visionLayers: []
-    weaponCharges: []
-    defenseCharges: []
 --- !u!4 &2082002265
 Transform:
   m_ObjectHideFlags: 0
@@ -530,7 +512,7 @@ Transform:
   m_GameObject: {fileID: 2082002263}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 2.68, y: 4.41, z: 0}
+  m_LocalPosition: {x: 2.68121, y: 5.06928, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
