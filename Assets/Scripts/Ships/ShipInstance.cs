@@ -16,17 +16,13 @@ public class ShipInstance
     public int rotationDegrees; // expected values: 0, 90, 180, 270
     public int movementRange = 3; // placeholder; real numbers come from the design doc later
 
-    // Defaults to a 1x2 footprint (Wolf Class). Can be overridden per ship.
-    public List<Vector2Int> footprintOffsets = new List<Vector2Int>
-    {
-        new Vector2Int(0, 0),
-        new Vector2Int(1, 0)
-    };
+    // Footprint is supplied by ShipData for each ship class.
+    public List<Vector2Int> footprintOffsets = new List<Vector2Int>();
 
     // --- Core stats ---
-    public int maxHealth = 100;
+    public int maxHealth;
     public int currentHealth;
-    public int armor = 0;
+    public int armor;
 
     // --- Domain state (Surface / SubSurface / Both) ---
     // Mutable at runtime — submarines toggle between Surface and SubSurface.
