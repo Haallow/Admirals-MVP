@@ -18,11 +18,14 @@ public class WeaponProfile
     // Ordered roll table — look up by rolling 1d20 and finding the matching tier.
     public List<RollTier> rollTiers;
 
-    public WeaponProfile(string id, int? ammo, DomainType targetDomain, List<RollTier> rollTiers)
+    //Weapon Range -- How far can it hit the target.
+    public int weaponRange;
+    public WeaponProfile(string id, int? ammo, DomainType targetDomain, List<RollTier> rollTiers, int weaponRange)
     {
         this.id = id;
         this.ammo = ammo;
         this.targetDomain = targetDomain;
         this.rollTiers = rollTiers;
+        this.weaponRange = weaponRange;
     }
 }

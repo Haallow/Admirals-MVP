@@ -18,4 +18,5 @@ public struct RollTier
         this.outcomeLabel = outcomeLabel;
         this.damage = damage;
     }
+
 }

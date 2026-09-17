@@ -18,6 +18,10 @@
 
         public ShipInstance TestShip => testShip;
 
+        public ShipInstance ObstructionShip => obstructionShip;
+
+        public float CellSize => cellSize;
+
         private void Awake()
         {
             BuildGrid();
@@ -34,6 +38,7 @@
             testShip.LogStatBlock("Wolf Class [PlayerA]");
 
             // --- Simple obstruction ship (PlayerB, no combat data needed yet) ---
+            BuildWolfClassTestShip(obstructionShip);
             obstructionShip.owner = PlayerId.PlayerB;
             obstructionShip.anchor = new Vector2Int(6, 3);
             obstructionShip.rotationDegrees = 0;
@@ -66,6 +71,7 @@
                 new WeaponProfile(
                     id: "MRK-1 Torpedo",
                     ammo: 4,
+                    weaponRange: 4,
                     targetDomain: DomainType.SubSurface,
                     rollTiers: new List<RollTier>
                     {
@@ -78,6 +84,7 @@
                 new WeaponProfile(
                     id: "Spear Anti-Ship Missile",
                     ammo: 2,
+                    weaponRange: 7,
                     targetDomain: DomainType.Surface,
                     rollTiers: new List<RollTier>
                     {
@@ -91,6 +98,7 @@
                 new WeaponProfile(
                     id: "Hippocampus Torpedo",
                     ammo: 3,
+                    weaponRange: 5,
                     targetDomain: DomainType.Both,
                     rollTiers: new List<RollTier>
                     {
@@ -101,6 +109,7 @@
                 )
             };
 
+            /*
             // --- Defenses ---
             ship.defenses = new List<DefenseProfile>
             {
@@ -141,7 +150,9 @@
                     }
                 )
             };
-
+            */
+            
+            /*
             // --- Vision layers ---
             ship.visionLayers = new List<VisionLayer>
             {
@@ -176,6 +187,7 @@
                     isPassive: false
                 )
             };
+            */
 
             ship.InitializeCharges();
         }
@@ -263,7 +275,7 @@
             return true;
         }
 
-        private int DistanceBetween(Vector2Int a, Vector2Int b)
+        public int DistanceBetween(Vector2Int a, Vector2Int b)
         {
             return Mathf.Max(Mathf.Abs(a.x - b.x), Mathf.Abs(a.y - b.y));
         }
@@ -329,4 +341,80 @@
                 }
             }
         }
+
+
+        //not really meant to be inside GridManager: fix later
+        public bool ResolveAttack(ShipInstance attacker, ShipInstance target, WeaponProfile weapon)
+        {
+            //Checking if the attackers weapon has ammo
+            ChargeState weaponCharge = FindChargeState(attacker.weaponCharges, weapon.id);
+            if (weaponCharge == null || !weaponCharge.IsReady)
+            {
+                return false;
+            }
+
+            //Weapon Domain Check: Subsurface
+            bool domainMatches = weapon.targetDomain == target.currentDomain || weapon.targetDomain == DomainType.Both;
+            if (!domainMatches)
+            {
+                return false;
+            }
+
+            //Check target if is within weapon range
+            int minDistance = 1000;
+            foreach (var targetCells in target.GetOccupiedCells())
+            {
+                minDistance = Mathf.Min(minDistance, DistanceBetween(attacker.anchor, targetCells));
+            }
+            if (weapon.weaponRange < minDistance)
+            {
+                return false;
+            }
+
+            RollTier result = RollWeapon(weapon);
+            target.currentHealth -= result.damage;
+            Debug.Log($"{attacker.owner} fires {weapon.id} at {target.owner}: {result.outcomeLabel}" + (result.damage > 0 ? $" ({result.damage} dmg)" : ""));
+
+            if (target.currentHealth <= 0)
+            {
+                Debug.Log($"{target.owner}'s ship destroyed!");
+                RemoveShip(target); // clears it off the grid, stops it being drawn/targetable
+            }
+
+            return true;
+            
+        }
+
+        //not really meant to be inside GridManager: fix later
+        //Roll Dice
+        private RollTier RollWeapon(WeaponProfile weapon)
+        {
+            int roll = Random.Range(1, 21);
+
+            foreach (var tier in weapon.rollTiers)
+            {
+                if (roll >= tier.minRoll && roll <= tier.maxRoll)
+                {
+                    return tier;
+                }
+            }
+            Debug.LogWarning($"Roll {roll} didn't match any tier on {weapon.id}. Check tier ranges.");
+            return new RollTier(0, 0, "Error", 0);
+        }
+
+
+        public ChargeState FindChargeState(List<ChargeState> charges, string profileId)
+        {
+            foreach (var charge in charges)
+            {
+                if (charge.profileId == profileId)
+                {
+                    return charge;
+                }
+            }
+            return null;
+        }
+
     }
+
+        

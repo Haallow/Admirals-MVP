@@ -1,9 +1,5 @@
 using UnityEngine;
 
-// Milestone 3 test input. Still throwaway, still not the real input system.
-// Milestone 4 addition: D key toggles the Wolf Class ship's domain between
-// Surface and SubSurface and re-logs the stat block so you can verify the
-// "onlyWhileSurfaced" vision layer active/inactive flag changes correctly.
 public class TestShipController : MonoBehaviour
 {
     [SerializeField] private GridManager gridManager;
@@ -23,9 +19,7 @@ public class TestShipController : MonoBehaviour
 
         ShipInstance ship = gridManager.TestShip;
 
-        // --- Milestone 4: domain toggle ---
-        // Press D to flip the Wolf Class between Surface and SubSurface and re-log.
-        // Proves the "Default Absolute Vision (onlyWhileSurfaced)" line changes accordingly.
+        // --- Domain toggle (ungated by phase/owner for now, same as before) ---
         if (Input.GetKeyDown(KeyCode.D))
         {
             ship.currentDomain = ship.currentDomain == DomainType.Surface
@@ -36,17 +30,24 @@ public class TestShipController : MonoBehaviour
             ship.LogStatBlock("Wolf Class [PlayerA] after domain toggle");
         }
 
-        // --- Movement / rotation (Milestone 3, unchanged) ---
-        if (turnManager.CurrentPhase != Phase.Move)
-        {
-            return; // no acting outside Move phase
-        }
-
+        // --- Ownership gate applies to both Move and Battle actions below ---
         if (ship.owner != turnManager.CurrentPlayer)
         {
-            return; // not this player's ship
+            return; // not this player's turn at all
         }
 
+        if (turnManager.CurrentPhase == Phase.Move)
+        {
+            HandleMoveInput(ship);
+        }
+        else if (turnManager.CurrentPhase == Phase.Battle)
+        {
+            HandleAttackInput(ship);
+        }
+    }
+
+    private void HandleMoveInput(ShipInstance ship)
+    {
         Vector2Int direction = Vector2Int.zero;
         if (Input.GetKeyDown(KeyCode.UpArrow))    direction = Vector2Int.up;
         else if (Input.GetKeyDown(KeyCode.DownArrow))  direction = Vector2Int.down;
@@ -74,5 +75,30 @@ public class TestShipController : MonoBehaviour
                 Debug.Log($"Rotated to {ship.rotationDegrees}");
             }
         }
+    }
+
+    private void HandleAttackInput(ShipInstance ship)
+    {
+        if (!Input.GetMouseButtonDown(0))
+        {
+            return;
+        }
+
+        Vector3 mouseWorld = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        Vector2Int clickedPos = new Vector2Int(
+            Mathf.RoundToInt(mouseWorld.x / gridManager.CellSize),
+            Mathf.RoundToInt(mouseWorld.y / gridManager.CellSize)
+        );
+
+        Tile clickedTile = gridManager.GetTile(clickedPos);
+        if (clickedTile == null || clickedTile.Occupant == null || clickedTile.Occupant.owner == ship.owner)
+        {
+            Debug.Log("No valid enemy target at clicked tile.");
+            return;
+        }
+
+        WeaponProfile weaponToUse = ship.weapons[2]; // barebone: always first weapon for now
+        bool hit = gridManager.ResolveAttack(ship, clickedTile.Occupant, weaponToUse);
+        Debug.Log(hit ? "Attack resolved." : "Attack rejected (ammo/domain/range).");
     }
 }
