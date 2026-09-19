@@ -528,9 +528,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8e8debe1e4251114480f9c5262a70181, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GridManager
-  width: 13
-  height: 10
+  width: 30
+  height: 15
   cellSize: 1
+  startingZoneWidth: 5
+  playerZoneColor: {r: 0, g: 0.35, b: 1, a: 0.18}
+  enemyZoneColor: {r: 1, g: 0.1, b: 0.1, a: 0.18}
   testShip:
     owner: 0
     anchor: {x: -4, y: 4}

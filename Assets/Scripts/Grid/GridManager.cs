@@ -4,9 +4,14 @@ using UnityEngine;
 public class GridManager : MonoBehaviour
 {
     [Header("Grid Size")]
-    [SerializeField] private int width = 10;
-    [SerializeField] private int height = 10;
+    [SerializeField] private int width = 30;
+    [SerializeField] private int height = 15;
     [SerializeField] private float cellSize = 1f;
+
+    [Header("Starting Zones")]
+    [SerializeField] private int startingZoneWidth = 5;
+    [SerializeField] private Color playerZoneColor = new Color(0f, 0.35f, 1f, 0.18f);
+    [SerializeField] private Color enemyZoneColor = new Color(1f, 0.1f, 0.1f, 0.18f);
 
     [Header("Test Ship (movable, owned by PlayerA)")]
     [SerializeField] private ShipType testShipType = ShipType.WolfClass;
@@ -173,6 +178,8 @@ public class GridManager : MonoBehaviour
             return;
         }
 
+        DrawStartingZones();
+
         foreach (var kvp in tiles)
         {
             Vector2Int pos = kvp.Key;
@@ -195,6 +202,8 @@ public class GridManager : MonoBehaviour
     // Scene-view grid preview before Play Mode builds the runtime tile dictionary.
     private void DrawEmptyGridPreview()
     {
+        DrawStartingZones();
+
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
@@ -202,6 +211,30 @@ public class GridManager : MonoBehaviour
                 Vector3 worldPos = new Vector3(x * cellSize, y * cellSize, 0f);
                 Gizmos.color = Color.gray;
                 Gizmos.DrawWireCube(worldPos, Vector3.one * cellSize * 0.95f);
+            }
+        }
+    }
+
+    private void DrawStartingZones()
+    {
+        int zoneWidth = Mathf.Clamp(startingZoneWidth, 0, width / 2);
+
+        for (int x = 0; x < width; x++)
+        {
+            bool isPlayerZone = x < zoneWidth;
+            bool isEnemyZone = x >= width - zoneWidth;
+
+            if (!isPlayerZone && !isEnemyZone)
+            {
+                continue;
+            }
+
+            Gizmos.color = isPlayerZone ? playerZoneColor : enemyZoneColor;
+
+            for (int y = 0; y < height; y++)
+            {
+                Vector3 worldPos = new Vector3(x * cellSize, y * cellSize, 0f);
+                Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.98f);
             }
         }
     }

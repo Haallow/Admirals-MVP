@@ -33,8 +33,8 @@ Every feature is broken into milestones, documented before being built. Mileston
 - [x] Milestone 1 — Grid + hardcoded ship placement
 - [x] Milestone 2 — Move/rotate + collision validation
 - [x] Milestone 3 — Move/Search/Battle turn-phase loop + player/ownership gating
-- [ ] Milestone 4 — Ship data model states (domain, weapon/defense profiles, charges) + one fully-statted ship
-- [ ] Milestone 5+ — Fog of War, scanning, combat resolution, remaining ships, abilities (planned, not yet scoped in detail)
+- [x] Milestone 4 — Ship data model states (domain, weapon/defense profiles, charges) + one fully-statted ship + some semblance of AI
+- [ ] Milestone 5+ — Fog of War, scanning, combat resolution, remaining ships, abilities (planned, not yet scoped in detail) 
 
 ---
 
