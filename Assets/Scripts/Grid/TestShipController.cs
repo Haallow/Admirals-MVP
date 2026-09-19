@@ -4,17 +4,36 @@ public class TestShipController : MonoBehaviour
 {
     [SerializeField] private GridManager gridManager;
     [SerializeField] private TurnManager turnManager;
+    private Vector2Int deploymentCursor;
+    private int deploymentRotation;
+    private bool deploymentConfirmed;
+
+    private void Start()
+    {
+        if (gridManager != null)
+        {
+            int deploymentZoneWidth = (gridManager.Width - gridManager.DeploymentDeadSpaceColumns) / 2;
+            deploymentCursor = new Vector2Int(deploymentZoneWidth / 2, gridManager.Height / 2);
+        }
+    }
 
     private void Update()
     {
-        if (Input.GetKeyDown(KeyCode.Space))
-        {
-            turnManager.AdvancePhase();
-        }
-
         if (gridManager == null || gridManager.TestShip == null || turnManager == null)
         {
             return;
+        }
+
+        if (turnManager.CurrentPhase == Phase.Deployment)
+        {
+            gridManager.SetDeploymentPreview(gridManager.TestShip, deploymentCursor, deploymentRotation, !deploymentConfirmed);
+            HandleDeploymentInput(gridManager.TestShip);
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            turnManager.AdvancePhase();
         }
 
         ShipInstance ship = gridManager.TestShip;
@@ -74,6 +93,52 @@ public class TestShipController : MonoBehaviour
             {
                 Debug.Log($"Rotated to {ship.rotationDegrees}");
             }
+        }
+    }
+
+    private void HandleDeploymentInput(ShipInstance ship)
+    {
+        if (deploymentConfirmed)
+        {
+            return;
+        }
+
+        Vector2Int direction = Vector2Int.zero;
+        if (Input.GetKeyDown(KeyCode.UpArrow)) direction = Vector2Int.up;
+        else if (Input.GetKeyDown(KeyCode.DownArrow)) direction = Vector2Int.down;
+        else if (Input.GetKeyDown(KeyCode.LeftArrow)) direction = Vector2Int.left;
+        else if (Input.GetKeyDown(KeyCode.RightArrow)) direction = Vector2Int.right;
+
+        if (direction != Vector2Int.zero)
+        {
+            Vector2Int candidate = deploymentCursor + direction;
+            if (gridManager.CanDeployShip(ship, PlayerId.PlayerA, candidate, deploymentRotation, gridManager.DeploymentDeadSpaceColumns))
+            {
+                deploymentCursor = candidate;
+                Debug.Log($"[Deployment] Player A cursor moved to {deploymentCursor}");
+            }
+        }
+
+        int rotationDelta = 0;
+        if (Input.GetKeyDown(KeyCode.Q)) rotationDelta = -90;
+        else if (Input.GetKeyDown(KeyCode.E)) rotationDelta = 90;
+
+        if (rotationDelta != 0)
+        {
+            int candidateRotation = ((deploymentRotation + rotationDelta) % 360 + 360) % 360;
+            if (gridManager.CanDeployShip(ship, PlayerId.PlayerA, deploymentCursor, candidateRotation, gridManager.DeploymentDeadSpaceColumns))
+            {
+                deploymentRotation = candidateRotation;
+                Debug.Log($"[Deployment] Player A rotation changed to {deploymentRotation}");
+            }
+        }
+
+        if (Input.GetKeyDown(KeyCode.Return) && gridManager.DeployShip(ship, PlayerId.PlayerA, deploymentCursor, deploymentRotation, gridManager.DeploymentDeadSpaceColumns))
+        {
+            deploymentConfirmed = true;
+            gridManager.SetDeploymentPreview(ship, deploymentCursor, deploymentRotation, false);
+            Debug.Log($"[Deployment] Player A selected {deploymentCursor}, rotation {deploymentRotation}.");
+            turnManager.ConfirmDeployment(PlayerId.PlayerA);
         }
     }
 

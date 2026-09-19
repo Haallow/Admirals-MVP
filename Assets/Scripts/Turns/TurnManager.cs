@@ -3,7 +3,9 @@ using UnityEngine;
 public class TurnManager : MonoBehaviour
 {
     [SerializeField] private PlayerId currentPlayer = PlayerId.PlayerA;
-    [SerializeField] private Phase currentPhase = Phase.Move;
+    [SerializeField] private Phase currentPhase = Phase.Deployment;
+    private bool playerADeploymentConfirmed;
+    private bool playerBDeploymentConfirmed;
 
     public PlayerId CurrentPlayer => currentPlayer;
     public Phase CurrentPhase => currentPhase;
@@ -19,6 +21,8 @@ public class TurnManager : MonoBehaviour
     {
         switch (currentPhase)
         {
+            case Phase.Deployment:
+                return;
             case Phase.Move:
                 currentPhase = Phase.Search;
                 break;
@@ -32,6 +36,31 @@ public class TurnManager : MonoBehaviour
         }
 
         LogState();
+    }
+
+    public void StartCombat()
+    {
+        currentPlayer = PlayerId.PlayerA;
+        currentPhase = Phase.Move;
+        LogState();
+    }
+
+    public void ConfirmDeployment(PlayerId player)
+    {
+        if (player == PlayerId.PlayerA)
+        {
+            playerADeploymentConfirmed = true;
+        }
+        else
+        {
+            playerBDeploymentConfirmed = true;
+        }
+
+        Debug.Log($"[Deployment] {player} confirmed.");
+        if (playerADeploymentConfirmed && playerBDeploymentConfirmed)
+        {
+            StartCombat();
+        }
     }
 
     private void SwitchPlayer()

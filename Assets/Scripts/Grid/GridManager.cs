@@ -7,6 +7,8 @@ public class GridManager : MonoBehaviour
     [SerializeField] private int width = 10;
     [SerializeField] private int height = 10;
     [SerializeField] private float cellSize = 1f;
+    [SerializeField, Min(0)] private int deploymentDeadSpaceColumns = 2;
+    [SerializeField] private TurnManager turnManager;
 
     [Header("Test Ship (movable, owned by PlayerA)")]
     [SerializeField] private ShipType testShipType = ShipType.WolfClass;
@@ -17,10 +19,17 @@ public class GridManager : MonoBehaviour
     [SerializeField] private ShipInstance obstructionShip;
 
     private Dictionary<Vector2Int, Tile> tiles = new Dictionary<Vector2Int, Tile>();
+    private ShipInstance deploymentPreviewShip;
+    private Vector2Int deploymentPreviewAnchor;
+    private int deploymentPreviewRotation;
+    private bool showDeploymentPreview;
 
     public ShipInstance TestShip => testShip;
     public ShipInstance ObstructionShip => obstructionShip;
     public float CellSize => cellSize;
+    public int Width => width;
+    public int Height => height;
+    public int DeploymentDeadSpaceColumns => deploymentDeadSpaceColumns;
 
     private void Awake()
     {
@@ -29,22 +38,24 @@ public class GridManager : MonoBehaviour
 
     private void Start()
     {
+        if (turnManager == null)
+        {
+            turnManager = FindAnyObjectByType<TurnManager>();
+        }
+
         // Ship card data lives in ShipData/ShipFactory; GridManager only owns
         // runtime placement, grid occupancy, and current prototype interactions.
         testShip = ShipFactory.CreateShip(testShipType);
         testShip.owner = PlayerId.PlayerA;
-        testShip.anchor = new Vector2Int(3, 3);
+        testShip.anchor = Vector2Int.zero;
         testShip.rotationDegrees = 0;
-        PlaceShip(testShip, testShip.GetOccupiedCells());
         testShip.LogStatBlock($"{testShipType} [PlayerA]");
 
         obstructionShip = ShipFactory.CreateShip(obstructionShipType);
         obstructionShip.owner = PlayerId.PlayerB;
-        obstructionShip.anchor = new Vector2Int(6, 3);
+        obstructionShip.anchor = Vector2Int.zero;
         obstructionShip.rotationDegrees = 0;
-        PlaceShip(obstructionShip, obstructionShip.GetOccupiedCells());
         obstructionShip.LogStatBlock($"{obstructionShipType} [PlayerB]");
-        LogOccupiedCells($"{obstructionShipType} [PlayerB]", obstructionShip);
     }
 
 
@@ -136,6 +147,63 @@ public class GridManager : MonoBehaviour
         return true;
     }
 
+    public bool IsDeploymentZone(PlayerId player, Vector2Int cell, int deadSpaceColumns)
+    {
+        int safeDeadSpaceColumns = Mathf.Clamp(deadSpaceColumns, 0, width);
+        int zoneWidth = (width - safeDeadSpaceColumns) / 2;
+        if (zoneWidth <= 0)
+        {
+            return false;
+        }
+
+        if (player == PlayerId.PlayerA)
+        {
+            return cell.x < zoneWidth;
+        }
+
+        int playerBStart = width - zoneWidth;
+        return cell.x >= playerBStart;
+    }
+
+    public bool CanDeployShip(ShipInstance ship, PlayerId player, Vector2Int candidateAnchor, int candidateRotation, int deadSpaceColumns)
+    {
+        if (!CanPlaceShip(ship, candidateAnchor, candidateRotation))
+        {
+            return false;
+        }
+
+        foreach (Vector2Int cell in FootprintUtil.GetWorldCells(candidateAnchor, ship.footprintOffsets, candidateRotation))
+        {
+            if (!IsDeploymentZone(player, cell, deadSpaceColumns))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public bool DeployShip(ShipInstance ship, PlayerId player, Vector2Int candidateAnchor, int candidateRotation, int deadSpaceColumns)
+    {
+        if (ship == null || ship.owner != player || !CanDeployShip(ship, player, candidateAnchor, candidateRotation, deadSpaceColumns))
+        {
+            return false;
+        }
+
+        ship.anchor = candidateAnchor;
+        ship.rotationDegrees = candidateRotation;
+        PlaceShip(ship, ship.GetOccupiedCells());
+        return true;
+    }
+
+    public void SetDeploymentPreview(ShipInstance ship, Vector2Int anchor, int rotationDegrees, bool visible)
+    {
+        deploymentPreviewShip = ship;
+        deploymentPreviewAnchor = anchor;
+        deploymentPreviewRotation = rotationDegrees;
+        showDeploymentPreview = visible;
+    }
+
     public int DistanceBetween(Vector2Int a, Vector2Int b)
     {
         return Mathf.Max(Mathf.Abs(a.x - b.x), Mathf.Abs(a.y - b.y));
@@ -170,6 +238,7 @@ public class GridManager : MonoBehaviour
         if (!Application.isPlaying)
         {
             DrawEmptyGridPreview();
+            DrawDeploymentDeadSpace();
             return;
         }
 
@@ -179,7 +248,12 @@ public class GridManager : MonoBehaviour
             Tile tile = kvp.Value;
             Vector3 worldPos = new Vector3(pos.x * cellSize, pos.y * cellSize, 0f);
 
-            if (tile.Occupant != null)
+            bool hidePlayerBShip = turnManager != null &&
+                turnManager.CurrentPhase == Phase.Deployment &&
+                tile.Occupant != null &&
+                tile.Occupant.owner == PlayerId.PlayerB;
+
+            if (tile.Occupant != null && !hidePlayerBShip)
             {
                 Gizmos.color = tile.Occupant == testShip ? Color.cyan : Color.red;
                 Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.9f);
@@ -188,6 +262,18 @@ public class GridManager : MonoBehaviour
             {
                 Gizmos.color = Color.gray;
                 Gizmos.DrawWireCube(worldPos, Vector3.one * cellSize * 0.95f);
+            }
+        }
+
+        DrawDeploymentDeadSpace();
+
+        if (showDeploymentPreview && deploymentPreviewShip != null)
+        {
+            Gizmos.color = new Color(0.15f, 0.55f, 1f, 0.35f);
+            foreach (Vector2Int cell in FootprintUtil.GetWorldCells(deploymentPreviewAnchor, deploymentPreviewShip.footprintOffsets, deploymentPreviewRotation))
+            {
+                Vector3 worldPos = new Vector3(cell.x * cellSize, cell.y * cellSize, -0.1f);
+                Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.9f);
             }
         }
     }
@@ -202,6 +288,26 @@ public class GridManager : MonoBehaviour
                 Vector3 worldPos = new Vector3(x * cellSize, y * cellSize, 0f);
                 Gizmos.color = Color.gray;
                 Gizmos.DrawWireCube(worldPos, Vector3.one * cellSize * 0.95f);
+            }
+        }
+    }
+
+    private void DrawDeploymentDeadSpace()
+    {
+        int safeDeadSpaceColumns = Mathf.Clamp(deploymentDeadSpaceColumns, 0, width);
+        int zoneWidth = (width - safeDeadSpaceColumns) / 2;
+        if (zoneWidth <= 0)
+        {
+            return;
+        }
+
+        Gizmos.color = new Color(1f, 0.75f, 0.15f, 0.18f);
+        for (int x = zoneWidth; x < width - zoneWidth; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                Vector3 worldPos = new Vector3(x * cellSize, y * cellSize, 0.1f);
+                Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.9f);
             }
         }
     }

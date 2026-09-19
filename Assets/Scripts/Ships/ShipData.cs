@@ -6,7 +6,7 @@ public static class ShipData
     public static void BuildWolfClass(ShipInstance ship)
     {
         // --- Core stats ---
-        ship.maxHealth = 500;
+        ship.maxHealth = 1000;
         ship.armor = 50;
         ship.movementRange = 3;
         ship.currentDomain = DomainType.Surface;
