@@ -24,6 +24,13 @@ public class GridManager : MonoBehaviour
     private int deploymentPreviewRotation;
     private bool showDeploymentPreview;
 
+    private ShipInstance searchPreviewShip;
+    private Vector2Int searchPreviewAnchor;
+    private bool showSearchPreview;
+    private bool searchConfirmed;
+    private HashSet<Vector2Int> searchPatternCells = new HashSet<Vector2Int>();
+    private HashSet<Vector2Int> searchDetectedCells = new HashSet<Vector2Int>();
+
     public ShipInstance TestShip => testShip;
     public ShipInstance ObstructionShip => obstructionShip;
     public float CellSize => cellSize;
@@ -204,6 +211,124 @@ public class GridManager : MonoBehaviour
         showDeploymentPreview = visible;
     }
 
+    public void SetSearchPreview(ShipInstance ship, Vector2Int anchor, bool visible)
+    {
+        searchPreviewShip = ship;
+        searchPreviewAnchor = anchor;
+        showSearchPreview = visible;
+
+        if (ship == null || !visible)
+        {
+            searchPatternCells.Clear();
+            searchDetectedCells.Clear();
+            return;
+        }
+
+        var pattern = ship.GetSelectedSearchPattern();
+        searchPatternCells.Clear();
+
+        if (pattern == null)
+        {
+            searchDetectedCells.Clear();
+            return;
+        }
+
+        foreach (var cell in pattern.GetCells(anchor, ship.rotationDegrees))
+        {
+            searchPatternCells.Add(cell);
+        }
+
+        if (searchConfirmed)
+        {
+            searchDetectedCells.Clear();
+            ShipInstance enemy = GetEnemyShip(ship);
+            if (enemy != null)
+            {
+                foreach (var cell in enemy.GetOccupiedCells())
+                {
+                    if (searchPatternCells.Contains(cell))
+                    {
+                        searchDetectedCells.Add(cell);
+                    }
+                }
+            }
+        }
+        else
+        {
+            searchDetectedCells.Clear();
+        }
+    }
+
+    public void ClearSearchState()
+    {
+        searchConfirmed = false;
+        searchPatternCells.Clear();
+        searchDetectedCells.Clear();
+        showSearchPreview = false;
+    }
+
+    public List<Vector2Int> ResolveSearch(ShipInstance ship, Vector2Int anchor)
+    {
+        if (ship == null)
+        {
+            return new List<Vector2Int>();
+        }
+
+        SearchPatternDefinition pattern = ship.GetSelectedSearchPattern();
+        if (pattern == null || !pattern.IsAvailable(ship))
+        {
+            return new List<Vector2Int>();
+        }
+
+        ShipInstance enemy = GetEnemyShip(ship);
+        if (enemy == null)
+        {
+            return new List<Vector2Int>();
+        }
+
+        List<Vector2Int> detected = new List<Vector2Int>();
+        foreach (var cell in pattern.GetCells(anchor, ship.rotationDegrees))
+        {
+            if (enemy.GetOccupiedCells().Contains(cell))
+            {
+                detected.Add(cell);
+            }
+        }
+
+        searchPatternCells.Clear();
+        searchDetectedCells.Clear();
+        foreach (var cell in pattern.GetCells(anchor, ship.rotationDegrees))
+        {
+            searchPatternCells.Add(cell);
+        }
+
+        foreach (var cell in detected)
+        {
+            searchDetectedCells.Add(cell);
+        }
+
+        searchConfirmed = true;
+        showSearchPreview = true;
+
+        Debug.Log($"[Search] {ship.owner} scanned {anchor} with {pattern.id}. Detected {detected.Count} enemy tile(s): {string.Join(", ", detected)}");
+        return detected;
+    }
+
+    public ShipInstance GetEnemyShip(ShipInstance ship)
+    {
+        if (ship == null)
+        {
+            return null;
+        }
+
+        if (ship.owner == PlayerId.PlayerA)
+        {
+            return obstructionShip;
+        }
+
+        return testShip;
+    }
+
     public int DistanceBetween(Vector2Int a, Vector2Int b)
     {
         return Mathf.Max(Mathf.Abs(a.x - b.x), Mathf.Abs(a.y - b.y));
@@ -274,6 +399,33 @@ public class GridManager : MonoBehaviour
             {
                 Vector3 worldPos = new Vector3(cell.x * cellSize, cell.y * cellSize, -0.1f);
                 Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.9f);
+            }
+        }
+
+        if (showSearchPreview && searchPreviewShip != null)
+        {
+            SearchPatternDefinition pattern = searchPreviewShip.GetSelectedSearchPattern();
+            if (pattern != null)
+            {
+                if (!searchConfirmed)
+                {
+                    Gizmos.color = new Color(0.15f, 0.75f, 1f, 0.28f);
+                    foreach (var cell in pattern.GetCells(searchPreviewAnchor, searchPreviewShip.rotationDegrees))
+                    {
+                        Vector3 worldPos = new Vector3(cell.x * cellSize, cell.y * cellSize, -0.2f);
+                        Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.8f);
+                    }
+                }
+
+                if (searchConfirmed)
+                {
+                    Gizmos.color = new Color(1f, 0.55f, 0f, 0.85f);
+                    foreach (var detectedCell in searchDetectedCells)
+                    {
+                        Vector3 worldPos = new Vector3(detectedCell.x * cellSize, detectedCell.y * cellSize, -0.15f);
+                        Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.7f);
+                    }
+                }
             }
         }
     }

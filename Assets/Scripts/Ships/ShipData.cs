@@ -136,6 +136,9 @@ public static class ShipData
             )
         };
 
+        ship.searchPatterns = SearchPatternCatalog.BuildDefaultPatterns();
+        ship.selectedSearchPatternIndex = 0;
+
         ship.InitializeCharges();
     }
 

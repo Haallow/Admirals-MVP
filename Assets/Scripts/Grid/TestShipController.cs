@@ -8,6 +8,11 @@ public class TestShipController : MonoBehaviour
     private int deploymentRotation;
     private bool deploymentConfirmed;
 
+    private Vector2Int searchCursor;
+    private bool searchActivated;
+    private int searchPatternIndex;
+    private Phase lastObservedPhase = Phase.Deployment;
+
     private void Start()
     {
         if (gridManager != null)
@@ -24,10 +29,36 @@ public class TestShipController : MonoBehaviour
             return;
         }
 
+        if (turnManager.CurrentPhase != lastObservedPhase)
+        {
+            if (turnManager.CurrentPhase == Phase.Search)
+            {
+                searchActivated = false;
+                gridManager.ClearSearchState();
+            }
+
+            lastObservedPhase = turnManager.CurrentPhase;
+        }
+
+        if (gridManager.TestShip != null && gridManager.TestShip.currentHealth <= 0)
+        {
+            return;
+        }
+
         if (turnManager.CurrentPhase == Phase.Deployment)
         {
             gridManager.SetDeploymentPreview(gridManager.TestShip, deploymentCursor, deploymentRotation, !deploymentConfirmed);
             HandleDeploymentInput(gridManager.TestShip);
+            return;
+        }
+
+        if (turnManager.CurrentPhase == Phase.Search)
+        {
+            if (gridManager.TestShip != null)
+            {
+                gridManager.SetSearchPreview(gridManager.TestShip, searchCursor, !searchActivated);
+            }
+            HandleSearchInput(gridManager.TestShip);
             return;
         }
 
@@ -139,6 +170,66 @@ public class TestShipController : MonoBehaviour
             gridManager.SetDeploymentPreview(ship, deploymentCursor, deploymentRotation, false);
             Debug.Log($"[Deployment] Player A selected {deploymentCursor}, rotation {deploymentRotation}.");
             turnManager.ConfirmDeployment(PlayerId.PlayerA);
+        }
+    }
+
+    private void HandleSearchInput(ShipInstance ship)
+    {
+        if (ship == null)
+        {
+            return;
+        }
+
+        if (searchActivated)
+        {
+            return;
+        }
+
+        Vector2Int direction = Vector2Int.zero;
+        if (Input.GetKeyDown(KeyCode.UpArrow)) direction = Vector2Int.up;
+        else if (Input.GetKeyDown(KeyCode.DownArrow)) direction = Vector2Int.down;
+        else if (Input.GetKeyDown(KeyCode.LeftArrow)) direction = Vector2Int.left;
+        else if (Input.GetKeyDown(KeyCode.RightArrow)) direction = Vector2Int.right;
+
+        if (direction != Vector2Int.zero)
+        {
+            searchCursor += direction;
+            gridManager.SetSearchPreview(ship, searchCursor, true);
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Q))
+        {
+            searchPatternIndex = (searchPatternIndex - 1 + ship.searchPatterns.Count) % ship.searchPatterns.Count;
+            ship.selectedSearchPatternIndex = searchPatternIndex;
+            gridManager.SetSearchPreview(ship, searchCursor, true);
+            Debug.Log($"[Search] Selected pattern: {ship.GetSelectedSearchPattern().id}");
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.E))
+        {
+            searchPatternIndex = (searchPatternIndex + 1) % ship.searchPatterns.Count;
+            ship.selectedSearchPatternIndex = searchPatternIndex;
+            gridManager.SetSearchPreview(ship, searchCursor, true);
+            Debug.Log($"[Search] Selected pattern: {ship.GetSelectedSearchPattern().id}");
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Return))
+        {
+            SearchPatternDefinition pattern = ship.GetSelectedSearchPattern();
+            if (pattern == null || !pattern.IsAvailable(ship))
+            {
+                Debug.Log("[Search] Selected pattern is unavailable.");
+                return;
+            }
+
+            searchActivated = true;
+            var detected = gridManager.ResolveSearch(ship, searchCursor);
+            gridManager.SetSearchPreview(ship, searchCursor, true);
+            Debug.Log($"[Search] Pattern {pattern.id} activated at {searchCursor}. Hit {detected.Count} enemy tile(s).");
+            turnManager.AdvancePhase();
         }
     }
 

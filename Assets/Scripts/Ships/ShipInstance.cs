@@ -33,6 +33,8 @@ public class ShipInstance
     public List<WeaponProfile> weapons = new List<WeaponProfile>();
     public List<DefenseProfile> defenses = new List<DefenseProfile>();
     public List<VisionLayer> visionLayers = new List<VisionLayer>();
+    public List<SearchPatternDefinition> searchPatterns = new List<SearchPatternDefinition>();
+    public int selectedSearchPatternIndex;
 
     // --- Runtime charge tracking (one entry per weapon / defense profile) ---
     // Populated by InitializeCharges(). These change as the game is played.
@@ -43,6 +45,17 @@ public class ShipInstance
     public List<Vector2Int> GetOccupiedCells()
     {
         return FootprintUtil.GetWorldCells(anchor, footprintOffsets, rotationDegrees);
+    }
+
+    public SearchPatternDefinition GetSelectedSearchPattern()
+    {
+        if (searchPatterns == null || searchPatterns.Count == 0)
+        {
+            return null;
+        }
+
+        int safeIndex = Mathf.Clamp(selectedSearchPatternIndex, 0, searchPatterns.Count - 1);
+        return searchPatterns[safeIndex];
     }
 
     // --- Setup ---
