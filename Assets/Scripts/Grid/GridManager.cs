@@ -4,8 +4,8 @@ using UnityEngine;
 public class GridManager : MonoBehaviour
 {
     [Header("Grid Size")]
-    [SerializeField] private int width = 30;
-    [SerializeField] private int height = 15;
+    [SerializeField] public int width = 30;
+    [SerializeField] public int height = 15;
     [SerializeField] private float cellSize = 1f;
 
     [Header("Starting Zones")]
@@ -23,33 +23,35 @@ public class GridManager : MonoBehaviour
 
     private Dictionary<Vector2Int, Tile> tiles = new Dictionary<Vector2Int, Tile>();
 
-    public ShipInstance TestShip => testShip;
-    public ShipInstance ObstructionShip => obstructionShip;
     public float CellSize => cellSize;
+
+    private MatchState match;
+    public MatchState Match => match;
+    public ShipInstance TestShip => match.playerA.ships.Count > 0 ? match.playerA.ships[0] : null;
+    public ShipInstance ObstructionShip => match.playerB.ships.Count > 0 ? match.playerB.ships[0] : null;
+
+    [SerializeField] private TurnManager turnManager;
+
+    public FogManager Fog { get; private set; }
+    
 
     private void Awake()
     {
         BuildGrid();
+        Fog = new FogManager();
     }
 
     private void Start()
     {
-        // Ship card data lives in ShipData/ShipFactory; GridManager only owns
-        // runtime placement, grid occupancy, and current prototype interactions.
-        testShip = ShipFactory.CreateShip(testShipType);
-        testShip.owner = PlayerId.PlayerA;
-        testShip.anchor = new Vector2Int(3, 3);
-        testShip.rotationDegrees = 0;
-        PlaceShip(testShip, testShip.GetOccupiedCells());
-        testShip.LogStatBlock($"{testShipType} [PlayerA]");
+        var playerA = new PlayerState(PlayerId.PlayerA, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
+        var playerB = new PlayerState(PlayerId.PlayerB, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
+        match = new MatchState(playerA, playerB);
+        DeploymentService.DeployAll(match, this);
 
-        obstructionShip = ShipFactory.CreateShip(obstructionShipType);
-        obstructionShip.owner = PlayerId.PlayerB;
-        obstructionShip.anchor = new Vector2Int(6, 3);
-        obstructionShip.rotationDegrees = 0;
-        PlaceShip(obstructionShip, obstructionShip.GetOccupiedCells());
-        obstructionShip.LogStatBlock($"{obstructionShipType} [PlayerB]");
-        LogOccupiedCells($"{obstructionShipType} [PlayerB]", obstructionShip);
+        if (turnManager != null)
+        {
+            turnManager.PhaseChanged += HandlePhaseChanged;
+        }
     }
 
 
@@ -149,7 +151,7 @@ public class GridManager : MonoBehaviour
     // Atomic move: all validation happens before the grid is mutated.
     public bool MoveShip(ShipInstance ship, Vector2Int newAnchor, int newRotationDegrees)
     {
-        int distance = DistanceBetween(ship.anchor, newAnchor);
+        int distance = DistanceBetween(ship.anchorAtTurnStart, newAnchor);
         if (distance > ship.movementRange)
         {
             Debug.Log($"Move rejected: distance {distance} exceeds movement range {ship.movementRange}.");
@@ -188,7 +190,7 @@ public class GridManager : MonoBehaviour
 
             if (tile.Occupant != null)
             {
-                Gizmos.color = tile.Occupant == testShip ? Color.cyan : Color.red;
+                Gizmos.color = tile.Occupant.owner == PlayerId.PlayerA ? Color.cyan : Color.red;
                 Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.9f);
             }
             else
@@ -197,6 +199,9 @@ public class GridManager : MonoBehaviour
                 Gizmos.DrawWireCube(worldPos, Vector3.one * cellSize * 0.95f);
             }
         }
+
+        DrawDebugCones();
+        DrawDebugHalos();
     }
 
     // Scene-view grid preview before Play Mode builds the runtime tile dictionary.
@@ -243,6 +248,9 @@ public class GridManager : MonoBehaviour
     // this, but keeping the hook here avoids a larger refactor before fog gating.
     public bool ResolveAttack(ShipInstance attacker, ShipInstance target, WeaponProfile weapon)
     {
+        //Guard: dead target can't be hit
+        if (target.currentHealth <= 0) return false;
+
         // Ammo/charge check.
         ChargeState weaponCharge = FindChargeState(attacker.weaponCharges, weapon.id);
         if (weaponCharge == null || !weaponCharge.IsReady)
@@ -269,6 +277,13 @@ public class GridManager : MonoBehaviour
             return false;
         }
 
+        // Resolve attacks for targets unknown in the map
+        if (!IsTargetKnown(attacker, target))
+        {
+            Debug.Log("Target not known.");
+            return false;
+        }
+
         RollTier result = RollWeapon(weapon);
         target.currentHealth -= result.damage;
         Debug.Log($"{attacker.owner} fires {weapon.id} at {target.owner}: {result.outcomeLabel}" + (result.damage > 0 ? $" ({result.damage} dmg)" : ""));
@@ -277,6 +292,7 @@ public class GridManager : MonoBehaviour
         {
             Debug.Log($"{target.owner}'s ship destroyed!");
             RemoveShip(target);
+            match.GetPlayer(target.owner).ships.Remove(target);
         }
 
         return true;
@@ -310,5 +326,103 @@ public class GridManager : MonoBehaviour
         }
 
         return null;
+    }
+
+    private void HandlePhaseChanged(Phase newPhase)
+    {
+        if (newPhase == Phase.Staging)
+        {
+            Fog.RecomputeAllPassive(match);   // fires once, right as Move ends
+        }
+        else if (newPhase == Phase.End)
+        {
+            Fog.ClearAllActiveMarks();        // fires once, before switching back to Move
+        } 
+        else if (newPhase == Phase.Search)
+        {
+            Fog.RunActiveSearch(turnManager.CurrentPlayer, match);
+        }
+        // Staging's actual actions (mines, planes) and End's cooldown/win-check
+        // ticks aren't built yet — this only handles what Fog needs today.
+    }
+
+    [ContextMenu("Debug Recompute Fog")]
+    private void DebugRecomputeFog()
+    {
+        Fog.RecomputeAllPassive(match);
+        foreach (var ship in match.AllShips())
+        {
+            PlayerId viewer = ship.owner == PlayerId.PlayerA ? PlayerId.PlayerB : PlayerId.PlayerA;
+            foreach (var cell in ship.GetOccupiedCells())
+                Debug.Log($"{viewer} sees {ship.owner} ship at {cell}: {Fog.GetFogGrid(viewer).GetState(cell)}");
+        }
+    }
+
+
+    //Bool function to know whether the tile being attack is unknown or known/detected
+    public bool IsTargetKnown(ShipInstance attacker, ShipInstance target)
+    {
+        FogGrid fog = Fog.GetFogGrid(attacker.owner);
+        foreach (var cell in target.GetOccupiedCells())
+        {
+            if (fog.IsKnown(cell)) return true;
+        }
+        return false;
+    }
+
+    // TEMP (Milestone 5, Step 6): remove after the cone geometry is verified.
+    [ContextMenu("Debug Cone Counts")]
+    private void DebugConeCounts()
+    {
+        int r2 = VisionResolver.GetConeCells(new Vector2Int(5, 5), Vector2Int.right, 2).Count;
+        int r4 = VisionResolver.GetConeCells(new Vector2Int(5, 5), Vector2Int.right, 4).Count;
+        Debug.Log($"Cone counts: r2={r2} (expect 8), r4={r4} (expect 24)");
+    }
+
+    private void DrawDebugCones()
+    {
+        if (match == null) return;
+        Gizmos.color = new Color(1f, 0.9f, 0f, 0.6f);
+
+        foreach (var ship in match.AllShips())
+        {
+            foreach (var layer in ship.visionLayers)
+            {
+                if (layer.isPassive || layer.shape != ShapeType.Cone) continue;
+
+                VisionResolver.GetBowAndFacing(ship, out Vector2Int bow, out Vector2Int forward);
+                foreach (var c in VisionResolver.GetConeCells(bow, forward, layer.range))
+                {
+                    Gizmos.DrawWireCube(new Vector3(c.x * cellSize, c.y * cellSize, 0f), Vector3.one * cellSize * 0.9f);
+                }
+            }
+        }
+    }
+
+    private void DrawDebugHalos()
+    {
+        if (match == null) return;
+        Gizmos.color = new Color(0f, 0.8f, 1f, 1f);
+
+        foreach (var ship in match.AllShips())
+        {
+            foreach (var layer in ship.visionLayers)
+            {
+                if (!layer.isPassive || layer.shape != ShapeType.Halo) continue;
+
+                for (int x = 0; x < width; x++)
+                {
+                    for (int y = 0; y < height; y++)
+                    {
+                        Vector2Int cell = new Vector2Int(x, y);
+                        int dist = Mathf.Max(Mathf.Abs(cell.x - ship.anchor.x), Mathf.Abs(cell.y - ship.anchor.y));
+                        if (dist <= layer.range)
+                        {
+                            Gizmos.DrawWireCube(new Vector3(x * cellSize, y * cellSize, 0f), Vector3.one * cellSize * 0.85f);
+                        }
+                    }
+                }
+            }
+        }
     }
 }

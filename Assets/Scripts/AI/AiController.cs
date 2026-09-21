@@ -29,6 +29,11 @@ public class AIController : MonoBehaviour
             actedThisPhase = false;
             lastPhase = turnManager.CurrentPhase;
             lastPlayer = turnManager.CurrentPlayer;
+
+            if (turnManager.CurrentPhase == Phase.Move)
+            {
+                gridManager.ObstructionShip.anchorAtTurnStart = gridManager.ObstructionShip.anchor;
+            }
         }
 
         if (actedThisPhase)

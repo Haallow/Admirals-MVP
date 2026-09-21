@@ -8,7 +8,7 @@ public static class ShipData
         // --- Core stats ---
         ship.maxHealth = 500;
         ship.armor = 50;
-        ship.movementRange = 3;
+        ship.movementRange = 10; //for testing
         ship.currentDomain = DomainType.Surface;
 
         ship.footprintOffsets = new List<Vector2Int>

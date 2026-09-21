@@ -1,6 +1,8 @@
 public enum Phase
 {
     Move,
+    Staging,
     Search,
-    Battle
+    Battle,
+    End
 }

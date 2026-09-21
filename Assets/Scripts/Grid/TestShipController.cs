@@ -1,9 +1,23 @@
 using UnityEngine;
 
+// Milestone test input, still throwaway, still not the real input system.
+//
+// New this round:
+//   - Tab cycles which of PlayerA's ships is currently controlled.
+//   - Number keys 1/2/3 pick which weapon HandleAttackInput will fire.
+// Both are needed now that PlayerA can have more than one ship on the board.
 public class TestShipController : MonoBehaviour
 {
     [SerializeField] private GridManager gridManager;
     [SerializeField] private TurnManager turnManager;
+
+    private Phase lastPhaseSeen;
+
+    // Index into gridManager.Match.playerA.ships — which ship responds to input.
+    private int currentShipIndex = 0;
+
+    // Index into the current ship's weapons list — which weapon HandleAttackInput uses.
+    private int selectedWeaponIndex = 0;
 
     private void Update()
     {
@@ -12,14 +26,32 @@ public class TestShipController : MonoBehaviour
             turnManager.AdvancePhase();
         }
 
-        if (gridManager == null || gridManager.TestShip == null || turnManager == null)
+        if (gridManager == null || turnManager == null || gridManager.Match == null)
         {
             return;
         }
 
-        ShipInstance ship = gridManager.TestShip;
+        // All of PlayerA's ships, so ship-switching has something to cycle through.
+        var myShips = gridManager.Match.playerA.ships;
+        if (myShips.Count == 0)
+        {
+            return;
+        }
 
-        // --- Domain toggle (ungated by phase/owner for now, same as before) ---
+        // --- Ship switching (works regardless of whose turn/phase it is,
+        // same as Space — just changes which ship future input targets) ---
+        currentShipIndex = Mathf.Min(currentShipIndex, myShips.Count - 1);
+
+        if (Input.GetKeyDown(KeyCode.Tab))
+        {
+            currentShipIndex = (currentShipIndex + 1) % myShips.Count;
+            selectedWeaponIndex = 0;
+            Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+        }
+
+        ShipInstance ship = myShips[currentShipIndex];
+
+        // --- Domain toggle (ungated by phase/owner, unchanged from before) ---
         if (Input.GetKeyDown(KeyCode.D))
         {
             ship.currentDomain = ship.currentDomain == DomainType.Surface
@@ -27,23 +59,38 @@ public class TestShipController : MonoBehaviour
                 : DomainType.Surface;
 
             Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
-            ship.LogStatBlock("Wolf Class [PlayerA] after domain toggle");
+            ship.LogStatBlock($"{ship.shipType} [PlayerA] after domain toggle");
         }
 
-        // --- Ownership gate applies to both Move and Battle actions below ---
         if (ship.owner != turnManager.CurrentPlayer)
         {
+            lastPhaseSeen = turnManager.CurrentPhase;
             return; // not this player's turn at all
         }
 
         if (turnManager.CurrentPhase == Phase.Move)
         {
+            // Just entered Move phase: snapshot EVERY one of this player's ships,
+            // not just the currently selected one. Otherwise switching ships
+            // mid-phase would let the newly selected ship dodge its own range
+            // check, since its anchorAtTurnStart would still be stale.
+            if (lastPhaseSeen != Phase.Move)
+            {
+                foreach (var s in myShips)
+                {
+                    s.anchorAtTurnStart = s.anchor;
+                }
+            }
+
             HandleMoveInput(ship);
         }
         else if (turnManager.CurrentPhase == Phase.Battle)
         {
+            HandleWeaponSelection(ship);
             HandleAttackInput(ship);
         }
+
+        lastPhaseSeen = turnManager.CurrentPhase;
     }
 
     private void HandleMoveInput(ShipInstance ship)
@@ -77,6 +124,31 @@ public class TestShipController : MonoBehaviour
         }
     }
 
+    // Number keys 1/2/3 pick which of the current ship's weapons will be used
+    // by HandleAttackInput. Out-of-range keys (e.g. pressing 3 on a 1-weapon
+    // ship) are ignored, index just doesn't change.
+    private void HandleWeaponSelection(ShipInstance ship)
+    {
+        int requestedIndex = -1;
+        if (Input.GetKeyDown(KeyCode.Alpha1)) requestedIndex = 0;
+        else if (Input.GetKeyDown(KeyCode.Alpha2)) requestedIndex = 1;
+        else if (Input.GetKeyDown(KeyCode.Alpha3)) requestedIndex = 2;
+
+        if (requestedIndex == -1)
+        {
+            return; // no number key pressed this frame
+        }
+
+        if (requestedIndex >= ship.weapons.Count)
+        {
+            Debug.Log($"Ship only has {ship.weapons.Count} weapon(s), no slot {requestedIndex + 1}.");
+            return;
+        }
+
+        selectedWeaponIndex = requestedIndex;
+        Debug.Log($"Selected weapon: {ship.weapons[selectedWeaponIndex].id}");
+    }
+
     private void HandleAttackInput(ShipInstance ship)
     {
         if (!Input.GetMouseButtonDown(0))
@@ -97,7 +169,16 @@ public class TestShipController : MonoBehaviour
             return;
         }
 
-        WeaponProfile weaponToUse = ship.weapons[2]; // barebone: always first weapon for now
+        // selectedWeaponIndex was already bounds-checked in HandleWeaponSelection,
+        // but re-check here too in case the active ship was switched (Tab) after
+        // selecting a weapon on a different ship with more weapon slots.
+        if (selectedWeaponIndex >= ship.weapons.Count)
+        {
+            Debug.Log("Selected weapon slot doesn't exist on this ship.");
+            return;
+        }
+
+        WeaponProfile weaponToUse = ship.weapons[selectedWeaponIndex];
         bool hit = gridManager.ResolveAttack(ship, clickedTile.Occupant, weaponToUse);
         Debug.Log(hit ? "Attack resolved." : "Attack rejected (ammo/domain/range).");
     }
