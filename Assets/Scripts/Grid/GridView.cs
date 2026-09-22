@@ -20,12 +20,6 @@ public class GridView : MonoBehaviour
     {
         if (gridManager == null) return;
 
-        if (!Application.isPlaying)
-        {
-            DrawEmptyGridPreview();
-            return;
-        }
-
         DrawStartingZones();
 
         foreach (var kvp in gridManager.AllTiles)
@@ -34,34 +28,34 @@ public class GridView : MonoBehaviour
             Tile tile = kvp.Value;
             Vector3 worldPos = new Vector3(pos.x * gridManager.CellSize, pos.y * gridManager.CellSize, 0f);
 
-            if (tile.Occupant != null)
-            {
-                Gizmos.color = tile.Occupant.owner == PlayerId.PlayerA ? Color.cyan : Color.red;
-                Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.9f);
-            }
-            else
-            {
-                Gizmos.color = Color.gray;
-                Gizmos.DrawWireCube(worldPos, Vector3.one * gridManager.CellSize * 0.95f);
-            }
+            DrawTerrain(tile, worldPos);
+
+            if (tile.Occupant == null) continue;
+
+            Gizmos.color = tile.Occupant.owner == PlayerId.PlayerA ? Color.cyan : Color.red;
+            Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.72f);
         }
 
         DrawDebugCones();
         DrawDebugHalos();
     }
 
-    private void DrawEmptyGridPreview()
+    private void DrawTerrain(Tile tile, Vector3 worldPos)
     {
-        DrawStartingZones();
-
-        for (int x = 0; x < gridManager.width; x++)
+        switch (tile.TerrainType)
         {
-            for (int y = 0; y < gridManager.height; y++)
-            {
-                Vector3 worldPos = new Vector3(x * gridManager.CellSize, y * gridManager.CellSize, 0f);
+            case TerrainType.Costly:
+                Gizmos.color = new Color(0.85f, 0.55f, 0.1f, 0.7f);
+                Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.96f);
+                break;
+            case TerrainType.Impassable:
+                Gizmos.color = new Color(0.25f, 0.25f, 0.25f, 0.95f);
+                Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.96f);
+                break;
+            default:
                 Gizmos.color = Color.gray;
                 Gizmos.DrawWireCube(worldPos, Vector3.one * gridManager.CellSize * 0.95f);
-            }
+                break;
         }
     }
 

@@ -33,6 +33,8 @@ Known gaps still present in the prototype:
 
 - Grid: `GridManager`, `Tile`, `FootprintUtil`
   - Builds the board, stores occupancy, validates placement, and moves ships.
+- Terrain: `MapDefinition`, `TerrainType`, `Tile`
+  - Authors reusable normal/costly/impassable terrain data and loads it into runtime cells.
 - Ships: `ShipInstance`, `ShipFactory`, `ShipData`, `ShipType`
   - Defines runtime ship state and builds hardcoded ship cards.
 - Match: `MatchState`, `PlayerState`, `DeploymentService`
@@ -98,6 +100,10 @@ The event flow is one-way: `TurnManager` raises `PhaseChanged`, and subscribers 
 
 - `GridManager.cs`
   - Scene-level controller for occupancy, placement, movement, match setup, and phase-driven fog updates.
+- `MapDefinition.cs`
+  - Reusable map asset containing dimensions and sparse terrain entries.
+- `TerrainType.cs`
+  - Explicit normal, costly, and impassable terrain categories.
 - `CombatResolver.cs`
   - Plain combat service for attack validation, d20 resolution, damage, and destruction cleanup.
 - `GridView.cs`
@@ -105,7 +111,7 @@ The event flow is one-way: `TurnManager` raises `PhaseChanged`, and subscribers 
 - `FootprintUtil.cs`
   - Rotation and world-cell math for ship footprints.
 - `Tile.cs`
-  - One coordinate in the board; stores the current ship occupant.
+  - One coordinate in the board; stores the current ship occupant and loaded terrain data.
 - `TestShipController.cs`
   - Temporary Player A input path; requests `GridManager` operations rather than duplicating movement/attack rules.
 
@@ -217,6 +223,9 @@ cleared at `End`.
 - `CanPlaceShip` validates candidate cells and rejects out-of-bounds or occupied cells from other ships.
 - `MoveShip` uses Chebyshev distance from `anchorAtTurnStart` and then validates placement before mutating state.
 - The movement path is atomic: remove old occupancy, mutate placement, and then place new occupancy.
+- Terrain is currently data only. `MapDefinition` loads `Normal`, `Costly`, or
+  `Impassable` into each `Tile`, but movement does not consume terrain cost or
+  route around obstacles until a later phase.
 
 ### Footprint geometry
 
@@ -286,6 +295,8 @@ When making changes, prefer these locations:
 | Desired change | Primary location |
 | --- | --- |
 | Change board dimensions or tile creation | `GridManager.BuildGrid` |
+| Author reusable map terrain | `MapDefinition` |
+| Query runtime terrain | `GridManager.GetTerrainType`, `IsTerrainPassable`, `GetTerrainMovementCost` |
 | Change footprint rotation/world-cell math | `FootprintUtil` |
 | Change placement collision rules | `GridManager.CanPlaceShip` |
 | Change movement budget or mutation | `GridManager.MoveShip` |
@@ -302,12 +313,17 @@ When making changes, prefer these locations:
 
 ## Temporary and debug code
 
-The codebase still contains explicit debug or prototype code that should be treated carefully:
+The codebase still contains explicit debug or prototype code that should be
+treated carefully:
 
-- `FogManager` debug logs for passive and active detection.
-- `FogGrid.Describe` debug formatting for fog dictionaries.
-- `GridManager` context-menu debug commands for fog recomputation and cone counts.
+- `GridView` terrain, cone, and halo Gizmos are retained as planned
+  visualization surfaces.
 - Console verification helpers such as `ShipInstance.LogStatBlock`.
+
+The former `[Fog]` logs, `FogGrid.Describe`, `Debug Cone Counts`,
+`FogManager.RecomputeAllPassive`, and `FogManager.RunActiveSearch` are not
+current cleanup targets: the first three were removed as one-off diagnostics,
+while the last two remain live fog lifecycle methods.
 - Temporary toggles and assumptions in `TestShipController` and `AIController`.
 
 These are valid for prototype validation but should not be treated as final gameplay systems unless they are intentionally kept.

@@ -126,6 +126,7 @@ in the scene and is intentionally separate from gameplay authority.
 | System | Main implementation | Responsibility |
 | --- | --- | --- |
 | Grid | `GridManager`, `Tile`, `FootprintUtil` | Builds the board, stores occupancy, validates placement, and moves ships. |
+| Terrain | `MapDefinition`, `TerrainType`, `Tile` | Defines reusable normal, costly, and impassable map data loaded into runtime cells. |
 | Ships | `ShipInstance`, `ShipFactory`, `ShipData`, `ShipType` | Defines runtime ship state and builds hardcoded ship cards. |
 | Match | `MatchState`, `PlayerState`, `DeploymentService` | Owns both players, their fleet rosters, live ships, and initial deployment. |
 | Turns | `TurnManager`, `Phase`, `PlayerId` | Advances the phase sequence and identifies the acting player. |
@@ -167,6 +168,27 @@ must be kept in sync by `PlaceShip`, `RemoveShip`, and `MoveShip`.
 ships, calculate geometry, or remember scan coverage. `FogManager` owns the two
 fog grids and decides when they are rebuilt or cleared. `VisionResolver` is
 stateless behavior used by `FogManager`.
+
+### Terrain foundation
+
+`MapDefinition` is the reusable authoring asset for a map's dimensions and
+coordinate-specific terrain entries. When assigned to `GridManager`, its
+dimensions are authoritative and its entries are copied into runtime `Tile`
+objects during `BuildGrid`. Without an assigned asset, the existing serialized
+`GridManager.width` and `height` are preserved and every tile defaults to
+`Normal`.
+
+`TerrainType` currently has three values:
+
+- `Normal`: passable with movement cost `1`.
+- `Costly`: passable with a configurable integer cost of at least `2`.
+- `Impassable`: not passable; its movement cost is `0`.
+
+`Tile.IsPassable`, `Tile.MovementCost`, and the corresponding
+`GridManager` terrain queries expose this data. Terrain cost is data only in
+this phase: current movement still uses its existing Chebyshev behavior and
+does not consume terrain cost. Vision line-of-sight and combat line-of-fire
+also do not use terrain yet.
 
 ### Runtime flow
 
@@ -216,6 +238,8 @@ Important members:
 - `turnManager`: serialized event source.
 - `Fog`: the `FogManager` created in `Awake`.
 - `BuildGrid`, `GetTile`, `IsInBounds`, and `IsOccupied`: board access.
+- `GetTerrainType`, `IsTerrainPassable`, and `GetTerrainMovementCost`: terrain
+  data queries only; they do not alter movement rules.
 - `CanPlaceShip`, `PlaceShip`, `RemoveShip`, `MoveShip`: placement/movement
   path.
 - `Combat`: `CombatResolver` facade used by controllers for attacks.
@@ -243,10 +267,21 @@ clockwise 0/90/180/270-degree convention to local footprint offsets.
 #### `Tile.cs` — `Tile`
 
 Plain data object for one grid coordinate. `Position` is immutable after
-construction, `Occupant` is the current ship reference, and `IsValid` is a
-reserved flag for future non-rectangular maps. The current rectangular
-builder
-does not use `IsValid`.
+construction, `Occupant` is the current ship reference, and `IsValid` remains
+a reserved flag for future non-rectangular maps. `TerrainType`,
+`MovementCost`, and `IsPassable` describe the loaded terrain without changing
+movement behavior.
+
+#### `MapDefinition.cs` — `MapDefinition`
+
+Reusable `ScriptableObject` map asset containing width, height, and sparse
+coordinate-to-terrain entries. Unspecified coordinates default to `Normal`.
+Costly entries normalize to a cost of at least `2`; impassable entries report
+no movement cost.
+
+#### `TerrainType.cs` — `TerrainType`
+
+Small enum containing `Normal`, `Costly`, and `Impassable`.
 
 #### `TestShipController.cs` — `TestShipController : MonoBehaviour`
 
@@ -1021,6 +1056,8 @@ AIController ------------------------------→ GridManager
 | Desired change | Primary location | Reason |
 | --- | --- | --- |
 | Change board dimensions or tile creation | `GridManager.BuildGrid` and serialized fields | Grid ownership lives there. |
+| Author map terrain | `MapDefinition` | Reusable dimensions and sparse coordinate-to-terrain entries. |
+| Query runtime terrain | `GridManager.GetTerrainType`, `IsTerrainPassable`, `GetTerrainMovementCost` | Read terrain data without changing current movement semantics. |
 | Change footprint rotation/world-cell math | `FootprintUtil` | All placement and vision hull calculations reuse it. |
 | Change placement collision rules | `GridManager.CanPlaceShip` | This is the single placement validation path. |
 | Change movement budget or mutation | `GridManager.MoveShip` | It owns range validation and atomic grid updates. |
@@ -1064,6 +1101,7 @@ an approximate debug drawing, not the authoritative detection result.
 
 | System | Current implementation | Planned / missing |
 | --- | --- | --- |
+| Terrain | `MapDefinition` loads normal, costly, and impassable data into runtime `Tile` objects; unassigned maps default to all `Normal`. | Terrain-aware movement costs, obstacle routing, vision line-of-sight, and attack line-of-fire rules. |
 | Fog storage | Two `FogGrid` objects, each with passive and active dictionaries. | Player-facing fog/visibility UI. |
 | Passive detection | `Search` recomputes live enemy cells using halo/cone rules and domain filters. | Additional shapes or line-of-sight, which are explicitly out of scope. |
 | Active Search | `Search` automatically runs every non-passive layer for every live acting-player ship; writes `Marked`. | Player-selected search action/aiming. |
@@ -1072,7 +1110,8 @@ an approximate debug drawing, not the authoritative detection result.
 | Combat resolution | d20 tier damage and destroyed-ship cleanup. | Armor, defense saves, charge spending/recharge, side effects. |
 | AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
 | Deployment | Both players receive Wolf and Athena at hardcoded anchors. | Validated deployment path and player-controlled deployment. |
-| Cleanup | Verification Gizmos remain; temporary fog logs and cone-count commands are removed. | Remove other prototype-only verification helpers when no longer useful. |
+| Movement | Immediate Chebyshev movement with occupancy validation; terrain is currently data only. | Dijkstra routing, costly-tile budgets, impassable obstacles, and provisional phase-end confirmation. |
+| Cleanup | Terrain, board, cone, and halo verification Gizmos remain; temporary fog logs and cone-count commands are removed. | Remove other prototype-only verification helpers when no longer useful. |
 | Match end | Dead ships are removed from grid and live fleet. | Win-condition/game-over handling. |
 
 ---

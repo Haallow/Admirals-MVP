@@ -10,6 +10,7 @@ public class GridManager : MonoBehaviour
     [SerializeField] public int width = 30;
     [SerializeField] public int height = 15;
     [SerializeField] private float cellSize = 1f;
+    [SerializeField] private MapDefinition mapDefinition;
 
     [SerializeField] private TurnManager turnManager;
 
@@ -35,6 +36,14 @@ public class GridManager : MonoBehaviour
         Combat = new CombatResolver(this);
     }
 
+    private void OnValidate()
+    {
+        if (!Application.isPlaying)
+        {
+            BuildGrid();
+        }
+    }
+
     private void Start()
     {
         var playerA = new PlayerState(PlayerId.PlayerA, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
@@ -50,13 +59,26 @@ public class GridManager : MonoBehaviour
 
     private void BuildGrid()
     {
+        if (mapDefinition != null)
+        {
+            width = mapDefinition.width;
+            height = mapDefinition.height;
+        }
+
         tiles.Clear();
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
             {
                 Vector2Int pos = new Vector2Int(x, y);
-                tiles[pos] = new Tile(pos);
+                Tile tile = new Tile(pos);
+                if (mapDefinition != null &&
+                    mapDefinition.TryGetTerrain(pos, out TerrainType terrainType, out int movementCost))
+                {
+                    tile.SetTerrain(terrainType, movementCost);
+                }
+
+                tiles[pos] = tile;
             }
         }
     }
@@ -76,6 +98,24 @@ public class GridManager : MonoBehaviour
     {
         tiles.TryGetValue(pos, out Tile tile);
         return tile;
+    }
+
+    public TerrainType GetTerrainType(Vector2Int pos)
+    {
+        Tile tile = GetTile(pos);
+        return tile != null ? tile.TerrainType : TerrainType.Impassable;
+    }
+
+    public bool IsTerrainPassable(Vector2Int pos)
+    {
+        Tile tile = GetTile(pos);
+        return tile != null && tile.IsPassable;
+    }
+
+    public int GetTerrainMovementCost(Vector2Int pos)
+    {
+        Tile tile = GetTile(pos);
+        return tile != null ? tile.MovementCost : 0;
     }
 
     public void PlaceShip(ShipInstance ship, List<Vector2Int> cells)
