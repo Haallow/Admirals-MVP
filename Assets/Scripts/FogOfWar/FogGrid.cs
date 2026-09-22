@@ -27,15 +27,6 @@ public class FogGrid
         return GetState(pos) != FogState.Unknown;
     }
 
-    // TEMP debug helper for Milestone 5 verification.
-    public string Describe()
-    {
-        var sb = new System.Text.StringBuilder();
-        foreach (var kv in passive) sb.Append($"{kv.Key}={kv.Value} ");
-        foreach (var kv in active) sb.Append($"{kv.Key}={kv.Value}(active) ");
-        return sb.Length == 0 ? "nothing known" : sb.ToString();
-    }
-
     // Never downgrades. This is why passive layers need no Absolute-first ordering:
     // Identified always beats Marked no matter which layer writes first.
     private static void Upgrade(Dictionary<Vector2Int, FogState> layer, Vector2Int pos, FogState newState)

@@ -102,7 +102,7 @@ public class AIController : MonoBehaviour
             return;
         }
 
-        bool hit = gridManager.ResolveAttack(aiShip, enemyShip, best);
+        bool hit = gridManager.Combat.ResolveAttack(aiShip, enemyShip, best);
         Debug.Log($"[AI] Fired {best.id} (expected value {bestScore:F1}): {(hit ? "resolved" : "rejected")}");
     }
 
@@ -110,7 +110,7 @@ public class AIController : MonoBehaviour
     // decide which weapons are even worth scoring, before actually firing one.
     private bool CanFire(ShipInstance attacker, ShipInstance target, WeaponProfile weapon)
     {
-        ChargeState charge = gridManager.FindChargeState(attacker.weaponCharges, weapon.id);
+        ChargeState charge = gridManager.Combat.FindChargeState(attacker.weaponCharges, weapon.id);
         if (charge == null || !charge.IsReady)
         {
             return false;

@@ -4,6 +4,7 @@ using UnityEngine;
 public class Tile
 {
     public Vector2Int Position { get; private set; }
+
     public ShipInstance Occupant;
     public bool IsValid = true; // reserved for non-rectangular boards later
 

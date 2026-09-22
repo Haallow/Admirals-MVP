@@ -17,9 +17,6 @@ public class FogManager
     {
         RecomputePassive(PlayerId.PlayerA, match);
         RecomputePassive(PlayerId.PlayerB, match);
-
-        Debug.Log($"[Fog] PlayerA knows: {playerAFog.Describe()}");   // TEMP
-        Debug.Log($"[Fog] PlayerB knows: {playerBFog.Describe()}");   // TEMP
     }
 
     // Automatic for now: Search has no player input in Milestone 5, so scanning is a phase side effect.
@@ -41,8 +38,6 @@ public class FogManager
                 }
             }
         }
-
-        Debug.Log($"[Fog] {owner} after active scan: {fog.Describe()}");   // TEMP
     }
 
     public void ClearAllActiveMarks()

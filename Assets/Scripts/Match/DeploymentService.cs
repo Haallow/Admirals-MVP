@@ -22,6 +22,12 @@ public static class DeploymentService
             ship.rotationDegrees = rotationDegrees;
             ship.anchorAtTurnStart = ship.anchor;
 
+            if (!gridManager.CanPlaceShip(ship, ship.anchor, ship.rotationDegrees))
+            {
+                Debug.LogWarning($"Deployment spot invalid for {type} ({player.owner}) at {ship.anchor}. Ship not placed.");
+                continue;
+            }
+
             gridManager.PlaceShip(ship, ship.GetOccupiedCells());
             player.ships.Add(ship);
             ship.LogStatBlock($"{type} [{player.owner}]");
