@@ -75,8 +75,12 @@ public class AIController : MonoBehaviour
             return;
         }
 
-        deploymentDecided = true;
-        AIDeploymentPlanner.TryDeploy(gridManager, turnManager, gridManager.ObstructionShip, PlayerId.PlayerB, false);
+        deploymentDecided = AIDeploymentPlanner.TryDeploy(
+            gridManager,
+            turnManager,
+            gridManager.ObstructionShip,
+            PlayerId.PlayerB,
+            false);
     }
 
     private void DecideMove(ShipInstance aiShip, ShipInstance enemyShip)

@@ -3,6 +3,9 @@ using UnityEngine;
 
 public static class DeploymentAI
 {
+    private const float MinimumScoreVariance = 2f;
+    private const float ScoreVarianceFraction = 0.1f;
+
     public struct Decision
     {
         public Vector2Int anchor;
@@ -18,6 +21,7 @@ public static class DeploymentAI
             rotationDegrees = ship.rotationDegrees,
             score = float.NegativeInfinity
         };
+        var candidates = new List<Decision>();
 
         int[] rotations = { 0, 90, 180, 270 };
         for (int rotationIndex = 0; rotationIndex < rotations.Length; rotationIndex++)
@@ -35,6 +39,13 @@ public static class DeploymentAI
 
                     float score = ScorePosition(ship, grid, anchor, rotation, deadSpaceRows);
                     Debug.Log($"[Deployment AI] Candidate {anchor} rotation {rotation}: score={score:F1}");
+                    candidates.Add(new Decision
+                    {
+                        anchor = anchor,
+                        rotationDegrees = rotation,
+                        score = score
+                    });
+
                     if (score > best.score)
                     {
                         best = new Decision
@@ -48,7 +59,48 @@ public static class DeploymentAI
             }
         }
 
+        if (candidates.Count == 0)
+        {
+            return best;
+        }
+
+        float scoreVariance = Mathf.Max(MinimumScoreVariance, Mathf.Abs(best.score) * ScoreVarianceFraction);
+        float minimumAcceptedScore = best.score - scoreVariance;
+        float totalWeight = 0f;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            if (candidates[i].score >= minimumAcceptedScore)
+            {
+                totalWeight += GetCandidateWeight(candidates[i].score, minimumAcceptedScore, best.score);
+            }
+        }
+
+        float randomValue = Random.Range(0f, totalWeight);
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            Decision candidate = candidates[i];
+            if (candidate.score < minimumAcceptedScore)
+            {
+                continue;
+            }
+
+            randomValue -= GetCandidateWeight(candidate.score, minimumAcceptedScore, best.score);
+            if (randomValue <= 0f)
+            {
+                Debug.Log($"[Deployment AI] Selected near-best candidate {candidate.anchor} rotation {candidate.rotationDegrees}: score={candidate.score:F1}, best={best.score:F1}");
+                return candidate;
+            }
+        }
+
         return best;
+    }
+
+    private static float GetCandidateWeight(float score, float minimumAcceptedScore, float bestScore)
+    {
+        float scoreRange = Mathf.Max(0.01f, bestScore - minimumAcceptedScore);
+        float relativeScore = Mathf.Clamp01((score - minimumAcceptedScore) / scoreRange);
+        return 1f + relativeScore * relativeScore * 3f;
     }
 
     private static float ScorePosition(ShipInstance ship, GridManager grid, Vector2Int anchor, int rotation, int deadSpaceRows)

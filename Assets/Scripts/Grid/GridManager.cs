@@ -407,14 +407,18 @@ public class GridManager : MonoBehaviour
             SearchPatternDefinition pattern = searchPreviewShip.GetSelectedSearchPattern();
             if (pattern != null)
             {
-                if (!searchConfirmed)
+                Gizmos.color = searchConfirmed
+                    ? new Color(0.15f, 0.75f, 1f, 0.18f)
+                    : new Color(0.15f, 0.75f, 1f, 0.28f);
+                foreach (var cell in pattern.GetCells(searchPreviewAnchor, searchPreviewShip.rotationDegrees))
                 {
-                    Gizmos.color = new Color(0.15f, 0.75f, 1f, 0.28f);
-                    foreach (var cell in pattern.GetCells(searchPreviewAnchor, searchPreviewShip.rotationDegrees))
+                    if (!IsInBounds(cell))
                     {
-                        Vector3 worldPos = new Vector3(cell.x * cellSize, cell.y * cellSize, -0.2f);
-                        Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.8f);
+                        continue;
                     }
+
+                    Vector3 worldPos = new Vector3(cell.x * cellSize, cell.y * cellSize, -0.2f);
+                    Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.8f);
                 }
 
                 if (searchConfirmed)
