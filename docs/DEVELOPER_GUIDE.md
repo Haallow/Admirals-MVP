@@ -110,7 +110,8 @@ in the scene and is intentionally separate from gameplay authority.
 
 - Obstacles will block movement through Dijkstra pathfinding and also block
   line of sight.
-- Movement will become provisional: preview first, then confirm at phase end.
+- Movement is provisional: preview first, then confirm at phase end; pointer/drag
+  input and visual previews remain future work.
 - Active scanning will become player-chosen, including shape, direction, and
   rotatable cones; it will no longer run automatically.
 - Staging will gain mines, planes, and a repair ship with self-heal behavior.
@@ -255,8 +256,11 @@ and fog access.
 #### `GridView.cs` — `GridView : MonoBehaviour`
 
 Visualization component that reads `GridManager` state and draws the board,
-starting zones, cone overlays, and halo overlays through Gizmos. It does not
-own occupancy or mutate gameplay state.
+starting zones, ship footprints, cone overlays, and halo overlays through
+Gizmos. During Move, provisional ship footprints are drawn from
+`ProvisionalMovementState` while the committed footprint is hidden. It does
+not own occupancy or mutate gameplay state. It also draws the weighted Dijkstra
+reachable-anchor area, filtered by the ship's current footprint placement rules.
 
 #### `FootprintUtil.cs` — `FootprintUtil`
 
@@ -282,6 +286,29 @@ no movement cost.
 #### `TerrainType.cs` — `TerrainType`
 
 Small enum containing `Normal`, `Costly`, and `Impassable`.
+
+#### `GridPathfinder.cs` — `GridPathfinder`
+
+Stateless 8-direction Dijkstra traversal over the runtime grid. It rejects
+out-of-bounds, impassable, and other-ship-occupied cells, charges the terrain
+cost of each entered destination cell, and reconstructs the cheapest route.
+The moving ship's own occupied cells are allowed so its current footprint does
+not block its read-only route calculation.
+
+#### `MovementPathResult.cs` — `MovementPathResult`
+
+Small path result containing reachability, total terrain cost, ordered cells,
+and whether the route fits the supplied movement budget. This is a calculation
+result only; it does not mutate ship anchors, rotations, or tile occupancy.
+
+#### `ProvisionalMovementState.cs` — `ProvisionalMovementState`
+
+Stores one ship's movement-phase snapshot and current candidate anchor,
+rotation, path, cost, and validity. `GridManager` owns these states. Previewing
+does not change the authoritative ship or tile occupancy. A rejected preview
+does not overwrite the last valid candidate, so pressing into an impassable,
+out-of-bounds, occupied, or over-budget destination leaves the ship ready to
+confirm its previous valid position.
 
 #### `TestShipController.cs` — `TestShipController : MonoBehaviour`
 
@@ -1058,6 +1085,7 @@ AIController ------------------------------→ GridManager
 | Change board dimensions or tile creation | `GridManager.BuildGrid` and serialized fields | Grid ownership lives there. |
 | Author map terrain | `MapDefinition` | Reusable dimensions and sparse coordinate-to-terrain entries. |
 | Query runtime terrain | `GridManager.GetTerrainType`, `IsTerrainPassable`, `GetTerrainMovementCost` | Read terrain data without changing current movement semantics. |
+| Calculate a weighted route | `GridPathfinder` via `GridManager.CalculateMovementPath` | Read-only 8-direction Dijkstra; does not move ships or mutate occupancy. |
 | Change footprint rotation/world-cell math | `FootprintUtil` | All placement and vision hull calculations reuse it. |
 | Change placement collision rules | `GridManager.CanPlaceShip` | This is the single placement validation path. |
 | Change movement budget or mutation | `GridManager.MoveShip` | It owns range validation and atomic grid updates. |
@@ -1101,7 +1129,7 @@ an approximate debug drawing, not the authoritative detection result.
 
 | System | Current implementation | Planned / missing |
 | --- | --- | --- |
-| Terrain | `MapDefinition` loads normal, costly, and impassable data into runtime `Tile` objects; unassigned maps default to all `Normal`. | Terrain-aware movement costs, obstacle routing, vision line-of-sight, and attack line-of-fire rules. |
+| Terrain | `MapDefinition` loads normal, costly, and impassable data into runtime `Tile` objects; unassigned maps default to all `Normal`. `GridPathfinder` consumes that data for read-only weighted routes. | Apply route results to movement, then add vision line-of-sight and attack line-of-fire rules. |
 | Fog storage | Two `FogGrid` objects, each with passive and active dictionaries. | Player-facing fog/visibility UI. |
 | Passive detection | `Search` recomputes live enemy cells using halo/cone rules and domain filters. | Additional shapes or line-of-sight, which are explicitly out of scope. |
 | Active Search | `Search` automatically runs every non-passive layer for every live acting-player ship; writes `Marked`. | Player-selected search action/aiming. |
@@ -1110,7 +1138,7 @@ an approximate debug drawing, not the authoritative detection result.
 | Combat resolution | d20 tier damage and destroyed-ship cleanup. | Armor, defense saves, charge spending/recharge, side effects. |
 | AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
 | Deployment | Both players receive Wolf and Athena at hardcoded anchors. | Validated deployment path and player-controlled deployment. |
-| Movement | Immediate Chebyshev movement with occupancy validation; terrain is currently data only. | Dijkstra routing, costly-tile budgets, impassable obstacles, and provisional phase-end confirmation. |
+| Movement | Keyboard movement creates read-only provisional previews from the movement-phase snapshot. Enter confirms, Escape or C cancels back to the movement-phase positions, and Space confirms before leaving Move. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Pointer/drag input, movement/path visualization, and richer movement UI. |
 | Cleanup | Terrain, board, cone, and halo verification Gizmos remain; temporary fog logs and cone-count commands are removed. | Remove other prototype-only verification helpers when no longer useful. |
 | Match end | Dead ships are removed from grid and live fleet. | Win-condition/game-over handling. |
 

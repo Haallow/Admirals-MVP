@@ -23,6 +23,13 @@ public class TestShipController : MonoBehaviour
     {
         if (Input.GetKeyDown(KeyCode.Space))
         {
+            if (turnManager.CurrentPhase == Phase.Move &&
+                !gridManager.ConfirmProvisionalMovement())
+            {
+                Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
+                return;
+            }
+
             turnManager.AdvancePhase();
         }
 
@@ -95,6 +102,29 @@ public class TestShipController : MonoBehaviour
 
     private void HandleMoveInput(ShipInstance ship)
     {
+        if (Input.GetKeyDown(KeyCode.Return))
+        {
+            if (!gridManager.ConfirmProvisionalMovement())
+            {
+                Debug.LogWarning("Provisional movement is invalid and was not confirmed.");
+            }
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            gridManager.CancelProvisionalMovement();
+            Debug.Log("Provisional movement cancelled.");
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.C))
+        {
+            gridManager.CancelProvisionalMovement();
+            Debug.Log("Provisional movement cancelled; ships reverted to their movement-phase positions.");
+            return;
+        }
+
         Vector2Int direction = Vector2Int.zero;
         if (Input.GetKeyDown(KeyCode.UpArrow))    direction = Vector2Int.up;
         else if (Input.GetKeyDown(KeyCode.DownArrow))  direction = Vector2Int.down;
@@ -103,10 +133,14 @@ public class TestShipController : MonoBehaviour
 
         if (direction != Vector2Int.zero)
         {
-            Vector2Int candidateAnchor = ship.anchor + direction;
-            if (gridManager.MoveShip(ship, candidateAnchor, ship.rotationDegrees))
+            Vector2Int candidateAnchor = GetPreviewAnchor(ship) + direction;
+            if (!gridManager.PreviewMove(ship, candidateAnchor, GetPreviewRotation(ship)))
             {
-                Debug.Log($"Moved to {ship.anchor}");
+                Debug.Log($"Move preview rejected at {candidateAnchor}; the ship remains at its last valid preview.");
+            }
+            else
+            {
+                Debug.Log($"Previewed move to {candidateAnchor}");
             }
         }
 
@@ -116,12 +150,42 @@ public class TestShipController : MonoBehaviour
 
         if (rotationDelta != 0)
         {
-            int candidateRotation = ((ship.rotationDegrees + rotationDelta) % 360 + 360) % 360;
-            if (gridManager.MoveShip(ship, ship.anchor, candidateRotation))
+            int candidateRotation = ((GetPreviewRotation(ship) + rotationDelta) % 360 + 360) % 360;
+            if (!gridManager.PreviewMove(ship, GetPreviewAnchor(ship), candidateRotation))
             {
-                Debug.Log($"Rotated to {ship.rotationDegrees}");
+                Debug.Log($"Rotation preview rejected at {candidateRotation}; the ship remains at its last valid preview.");
+            }
+            else
+            {
+                Debug.Log($"Previewed rotation to {candidateRotation}");
             }
         }
+    }
+
+    private Vector2Int GetPreviewAnchor(ShipInstance ship)
+    {
+        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+        {
+            if (state.Ship == ship)
+            {
+                return state.PreviewAnchor;
+            }
+        }
+
+        return ship.anchor;
+    }
+
+    private int GetPreviewRotation(ShipInstance ship)
+    {
+        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+        {
+            if (state.Ship == ship)
+            {
+                return state.PreviewRotation;
+            }
+        }
+
+        return ship.rotationDegrees;
     }
 
     // Number keys 1/2/3 pick which of the current ship's weapons will be used

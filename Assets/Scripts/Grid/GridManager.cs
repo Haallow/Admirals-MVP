@@ -15,6 +15,8 @@ public class GridManager : MonoBehaviour
     [SerializeField] private TurnManager turnManager;
 
     private Dictionary<Vector2Int, Tile> tiles = new Dictionary<Vector2Int, Tile>();
+    private Dictionary<ShipInstance, ProvisionalMovementState> provisionalMoves =
+        new Dictionary<ShipInstance, ProvisionalMovementState>();
 
     public float CellSize => cellSize;
 
@@ -118,6 +120,210 @@ public class GridManager : MonoBehaviour
         return tile != null ? tile.MovementCost : 0;
     }
 
+    public MovementPathResult CalculateMovementPath(
+        Vector2Int start,
+        Vector2Int destination,
+        int movementBudget,
+        ShipInstance movingShip = null)
+    {
+        return GridPathfinder.FindPath(this, start, destination, movementBudget, movingShip);
+    }
+
+    public MovementPathResult CalculateShipMovementPath(ShipInstance ship, Vector2Int destination)
+    {
+        if (ship == null)
+        {
+            return MovementPathResult.Unreachable();
+        }
+
+        return CalculateMovementPath(ship.anchor, destination, ship.movementRange, ship);
+    }
+
+    public HashSet<Vector2Int> CalculateReachableCells(ShipInstance ship)
+    {
+        if (ship == null)
+        {
+            return new HashSet<Vector2Int>();
+        }
+
+        return GridPathfinder.FindReachableCells(
+            this,
+            ship.anchor,
+            ship.movementRange,
+            ship);
+    }
+
+    public HashSet<Vector2Int> CalculateReachablePreviewAnchors(
+        ProvisionalMovementState state)
+    {
+        var validAnchors = new HashSet<Vector2Int>();
+        if (state == null)
+        {
+            return validAnchors;
+        }
+
+        foreach (Vector2Int anchor in CalculateReachableCells(state.Ship))
+        {
+            if (IsValidPreviewFootprint(state.Ship, anchor, state.PreviewRotation))
+            {
+                validAnchors.Add(anchor);
+            }
+        }
+
+        return validAnchors;
+    }
+
+    public IReadOnlyCollection<ProvisionalMovementState> ProvisionalMoves => provisionalMoves.Values;
+
+    public bool PreviewMove(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
+    {
+        if (ship == null)
+        {
+            return false;
+        }
+
+        EnsureMovementSnapshot(ship);
+        ProvisionalMovementState state = provisionalMoves[ship];
+        MovementPathResult path = CalculateMovementPath(
+            state.OriginalAnchor,
+            candidateAnchor,
+            ship.movementRange,
+            ship);
+
+        bool valid = path.CanMove && IsValidPreviewFootprint(ship, candidateAnchor, candidateRotation);
+        if (!valid)
+        {
+            return false;
+        }
+
+        state.SetPreview(candidateAnchor, candidateRotation, path, true);
+        return true;
+    }
+
+    public void CancelProvisionalMovement()
+    {
+        provisionalMoves.Clear();
+    }
+
+    public bool ConfirmProvisionalMovement()
+    {
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            if (!state.IsValid || !IsValidConfirmationFootprint(state))
+            {
+                return false;
+            }
+        }
+
+        Dictionary<ShipInstance, List<Vector2Int>> candidateCells =
+            new Dictionary<ShipInstance, List<Vector2Int>>();
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            candidateCells[state.Ship] = state.GetPreviewCells();
+        }
+
+        foreach (KeyValuePair<ShipInstance, List<Vector2Int>> candidate in candidateCells)
+        {
+            foreach (Vector2Int cell in candidate.Value)
+            {
+                foreach (KeyValuePair<ShipInstance, List<Vector2Int>> other in candidateCells)
+                {
+                    if (candidate.Key != other.Key && other.Value.Contains(cell))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            RemoveShip(state.Ship);
+        }
+
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            state.Ship.anchor = state.PreviewAnchor;
+            state.Ship.rotationDegrees = state.PreviewRotation;
+            PlaceShip(state.Ship, candidateCells[state.Ship]);
+        }
+
+        provisionalMoves.Clear();
+        return true;
+    }
+
+    private void EnsureMovementSnapshot(ShipInstance ship)
+    {
+        if (!provisionalMoves.ContainsKey(ship))
+        {
+            provisionalMoves[ship] = new ProvisionalMovementState(ship);
+        }
+    }
+
+    private bool IsValidPreviewFootprint(
+        ShipInstance ship,
+        Vector2Int candidateAnchor,
+        int candidateRotation)
+    {
+        List<Vector2Int> candidateCells =
+            FootprintUtil.GetWorldCells(candidateAnchor, ship.footprintOffsets, candidateRotation);
+
+        foreach (Vector2Int cell in candidateCells)
+        {
+            if (!IsInBounds(cell) || !IsTerrainPassable(cell))
+            {
+                return false;
+            }
+
+            Tile tile = GetTile(cell);
+            if (tile.Occupant != null && tile.Occupant != ship)
+            {
+                ProvisionalMovementState otherState;
+                if (!provisionalMoves.TryGetValue(tile.Occupant, out otherState) ||
+                    !otherState.GetPreviewCells().Contains(cell))
+                {
+                    return false;
+                }
+            }
+
+            foreach (ProvisionalMovementState otherState in provisionalMoves.Values)
+            {
+                if (otherState.Ship == ship)
+                {
+                    continue;
+                }
+
+                if (otherState.GetPreviewCells().Contains(cell))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsValidConfirmationFootprint(ProvisionalMovementState state)
+    {
+        List<ShipInstance> movingShips = new List<ShipInstance>(provisionalMoves.Keys);
+        foreach (Vector2Int cell in state.GetPreviewCells())
+        {
+            if (!IsInBounds(cell) || !IsTerrainPassable(cell))
+            {
+                return false;
+            }
+
+            Tile tile = GetTile(cell);
+            if (tile.Occupant != null &&
+                !movingShips.Contains(tile.Occupant))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public void PlaceShip(ShipInstance ship, List<Vector2Int> cells)
     {
         foreach (var cell in cells)
@@ -192,7 +398,27 @@ public class GridManager : MonoBehaviour
 
     private void HandlePhaseChanged(Phase newPhase)
     {
-        if (newPhase == Phase.Search)
+        if (newPhase == Phase.Move)
+        {
+            provisionalMoves.Clear();
+            if (match != null)
+            {
+                foreach (ShipInstance ship in turnManager.CurrentPlayer == PlayerId.PlayerA
+                    ? match.playerA.ships
+                    : match.playerB.ships)
+                {
+                    provisionalMoves[ship] = new ProvisionalMovementState(ship);
+                }
+            }
+        }
+        else if (newPhase == Phase.Staging)
+        {
+            if (!ConfirmProvisionalMovement())
+            {
+                Debug.LogWarning("Provisional movement confirmation failed; no ships were moved.");
+            }
+        }
+        else if (newPhase == Phase.Search)
         {
             // Passive refresh first, then this turn's active scan on top of it.
             Fog.RecomputeAllPassive(match);

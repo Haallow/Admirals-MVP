@@ -35,6 +35,10 @@ Known gaps still present in the prototype:
   - Builds the board, stores occupancy, validates placement, and moves ships.
 - Terrain: `MapDefinition`, `TerrainType`, `Tile`
   - Authors reusable normal/costly/impassable terrain data and loads it into runtime cells.
+- Movement paths: `GridPathfinder`, `MovementPathResult`
+  - Performs read-only weighted 8-direction Dijkstra calculations; it does not move ships or mutate occupancy.
+- Provisional movement: `ProvisionalMovementState`, `GridManager`
+  - Stores movement-phase snapshots and candidate placements; confirmation commits all candidates atomically.
 - Ships: `ShipInstance`, `ShipFactory`, `ShipData`, `ShipType`
   - Defines runtime ship state and builds hardcoded ship cards.
 - Match: `MatchState`, `PlayerState`, `DeploymentService`
@@ -223,9 +227,13 @@ cleared at `End`.
 - `CanPlaceShip` validates candidate cells and rejects out-of-bounds or occupied cells from other ships.
 - `MoveShip` uses Chebyshev distance from `anchorAtTurnStart` and then validates placement before mutating state.
 - The movement path is atomic: remove old occupancy, mutate placement, and then place new occupancy.
-- Terrain is currently data only. `MapDefinition` loads `Normal`, `Costly`, or
-  `Impassable` into each `Tile`, but movement does not consume terrain cost or
-  route around obstacles until a later phase.
+- Terrain is loaded into each `Tile` and consumed by provisional movement
+  previews. The legacy `MoveShip` method remains distance-based, while keyboard
+  movement now previews candidates through `GridManager.PreviewMove`; Enter
+  confirms, Escape cancels, and Space confirms before leaving Move.
+  Rejected previews must not replace the last valid provisional state; this keeps
+  phase confirmation atomic and prevents invalid terrain or footprint positions
+  from reaching the confirmation step.
 
 ### Footprint geometry
 
@@ -297,6 +305,7 @@ When making changes, prefer these locations:
 | Change board dimensions or tile creation | `GridManager.BuildGrid` |
 | Author reusable map terrain | `MapDefinition` |
 | Query runtime terrain | `GridManager.GetTerrainType`, `IsTerrainPassable`, `GetTerrainMovementCost` |
+| Calculate a weighted route | `GridPathfinder` via `GridManager.CalculateMovementPath` |
 | Change footprint rotation/world-cell math | `FootprintUtil` |
 | Change placement collision rules | `GridManager.CanPlaceShip` |
 | Change movement budget or mutation | `GridManager.MoveShip` |
