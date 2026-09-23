@@ -111,9 +111,17 @@ in the scene and is intentionally separate from gameplay authority.
 - Obstacles will block movement through Dijkstra pathfinding and also block
   line of sight.
 - Movement is provisional: keyboard and pointer/drag input preview through the
-  same API, then confirm at phase end; visual previews remain read-only.
-- Active scanning will become player-chosen, including shape, direction, and
-  rotatable cones; it will no longer run automatically.
+  same API. `Escape`/`C` cancels the preview, while `Space` commits all valid
+  previews and immediately advances out of `Move`; visual previews remain
+  read-only until that commit.
+- Active scanning is player-activated during Search: `S` opens the selected
+  ship's non-passive cone preview, `Q`/`E` rotate it, `Enter` or `Space`
+  confirms it, and `Escape`/`C` cancels it. Passive vision remains automatic.
+- Every passive and non-passive scan writes distinct `[VISION]` logs. The log
+  label identifies activation (`PASSIVE` or `NON-PASSIVE`), shape (`HALO` or
+  `CONE`), configured reveal type (`SENSOR` or `ABSOLUTE`), source ship,
+  owner, layer, detected cells, and applied fog state. Non-passive scans always
+  apply `Marked`, even if a layer is configured as `Absolute`.
 - Staging will gain mines, planes, and a repair ship with self-heal behavior.
 - Basic UI will expose fog/scan toggles, health bars, phase/ship/weapon
   indicators, and movement/scan previews.
@@ -313,11 +321,12 @@ confirm its previous valid position.
 #### `TestShipController.cs` — `TestShipController : MonoBehaviour`
 
 Temporary Player A input controller. It advances phases with Space, cycles
-Player A's live ships with Tab, selects weapon slots with 1/2/3, moves and
-rotates during `Move`, toggles domain with D, and requests attacks with a
-mouse click during `Battle`.
+Player A's live ships with Tab, selects weapon slots with 1/2/3, previews
+movement and rotation during `Move`, toggles domain with D, and requests
+attacks with a mouse click during `Battle`. `Escape`/`C` cancel movement
+previews; `Space` commits them and advances out of `Move`.
 
-It delegates legality to `GridManager.MoveShip` and
+It delegates movement preview and commit legality to `GridManager` and
 `GridManager.Combat.ResolveAttack`; it does not implement a second combat or movement
 validation path.
 
@@ -1138,7 +1147,7 @@ an approximate debug drawing, not the authoritative detection result.
 | Combat resolution | d20 tier damage and destroyed-ship cleanup. | Armor, defense saves, charge spending/recharge, side effects. |
 | AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
 | Deployment | Both players receive Wolf and Athena at hardcoded anchors. | Validated deployment path and player-controlled deployment. |
-| Movement | Keyboard and pointer dragging create read-only provisional previews from the movement-phase snapshot. Enter confirms, Escape or C cancels back to the movement-phase positions, and Space confirms before leaving Move. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Richer movement UI. |
+| Movement | Keyboard and pointer dragging create read-only provisional previews from the movement-phase snapshot. Escape or C cancels back to the movement-phase positions, and Space commits all valid previews before leaving Move. `Enter` is not a movement commit key. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Richer movement UI. |
 | Cleanup | Terrain, board, cone, and halo verification Gizmos remain; temporary fog logs and cone-count commands are removed. | Remove other prototype-only verification helpers when no longer useful. |
 | Match end | Dead ships are removed from grid and live fleet. | Win-condition/game-over handling. |
 

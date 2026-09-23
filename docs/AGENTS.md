@@ -229,8 +229,9 @@ cleared at `End`.
 - The movement path is atomic: remove old occupancy, mutate placement, and then place new occupancy.
 - Terrain is loaded into each `Tile` and consumed by provisional movement
   previews. The legacy `MoveShip` method remains distance-based, while keyboard
-  movement now previews candidates through `GridManager.PreviewMove`; Enter
-  confirms, Escape cancels, and Space confirms before leaving Move.
+  movement now previews candidates through `GridManager.PreviewMove`; Escape
+  or C cancels, and Space commits all valid previews before leaving Move.
+  Enter is not a movement commit key.
   Rejected previews must not replace the last valid provisional state; this keeps
   phase confirmation atomic and prevents invalid terrain or footprint positions
   from reaching the confirmation step.

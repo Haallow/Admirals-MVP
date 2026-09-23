@@ -32,6 +32,12 @@ public class TestShipController : MonoBehaviour
                 return;
             }
 
+            if (turnManager.CurrentPhase == Phase.Search &&
+                gridManager.ActiveScanPreview != null)
+            {
+                gridManager.ConfirmActiveScan();
+            }
+
             turnManager.AdvancePhase();
         }
 
@@ -98,21 +104,16 @@ public class TestShipController : MonoBehaviour
             HandleWeaponSelection(ship);
             HandleAttackInput(ship);
         }
+        else if (turnManager.CurrentPhase == Phase.Search)
+        {
+            HandleActiveScanInput(ship);
+        }
 
         lastPhaseSeen = turnManager.CurrentPhase;
     }
 
     private void HandleMoveInput(ShipInstance ship)
     {
-        if (Input.GetKeyDown(KeyCode.Return))
-        {
-            if (!gridManager.ConfirmProvisionalMovement())
-            {
-                Debug.LogWarning("Provisional movement is invalid and was not confirmed.");
-            }
-            return;
-        }
-
         if (Input.GetKeyDown(KeyCode.Escape))
         {
             gridManager.CancelProvisionalMovement();
@@ -233,6 +234,45 @@ public class TestShipController : MonoBehaviour
         }
 
         return ship.GetOccupiedCells().Contains(cell);
+    }
+
+    private void HandleActiveScanInput(ShipInstance ship)
+    {
+        if (Input.GetKeyDown(KeyCode.S))
+        {
+            if (gridManager.ActivateActiveScan(ship))
+            {
+                Debug.Log($"Active scan preview started for {ship.shipType}.");
+            }
+            else
+            {
+                Debug.Log("Selected ship has no non-passive cone scan.");
+            }
+        }
+
+        if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.C))
+        {
+            gridManager.CancelActiveScan();
+            Debug.Log("Active scan preview cancelled.");
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Q))
+        {
+            gridManager.RotateActiveScan(-1);
+        }
+        else if (Input.GetKeyDown(KeyCode.E))
+        {
+            gridManager.RotateActiveScan(1);
+        }
+
+        if (Input.GetKeyDown(KeyCode.Return))
+        {
+            if (gridManager.ConfirmActiveScan())
+            {
+                Debug.Log("Active scan confirmed.");
+            }
+        }
     }
 
     private Vector2Int GetPreviewAnchor(ShipInstance ship)

@@ -17,6 +17,7 @@ public class GridManager : MonoBehaviour
     private Dictionary<Vector2Int, Tile> tiles = new Dictionary<Vector2Int, Tile>();
     private Dictionary<ShipInstance, ProvisionalMovementState> provisionalMoves =
         new Dictionary<ShipInstance, ProvisionalMovementState>();
+    private ActiveScanPreviewState activeScanPreview;
 
     public float CellSize => cellSize;
 
@@ -30,6 +31,7 @@ public class GridManager : MonoBehaviour
 
     public FogManager Fog { get; private set; }
     public CombatResolver Combat { get; private set; }
+    public ActiveScanPreviewState ActiveScanPreview => activeScanPreview;
 
     private void Awake()
     {
@@ -203,6 +205,66 @@ public class GridManager : MonoBehaviour
     public void CancelProvisionalMovement()
     {
         provisionalMoves.Clear();
+    }
+
+    public bool ActivateActiveScan(ShipInstance ship)
+    {
+        if (ship == null || ship.owner != turnManager.CurrentPlayer)
+        {
+            return false;
+        }
+
+        VisionLayer layer = null;
+        foreach (VisionLayer candidate in ship.visionLayers)
+        {
+            if (!candidate.isPassive && candidate.shape == ShapeType.Cone)
+            {
+                layer = candidate;
+                break;
+            }
+        }
+
+        if (layer == null)
+        {
+            return false;
+        }
+
+        VisionResolver.GetBowAndFacing(ship, out Vector2Int bow, out Vector2Int forward);
+        activeScanPreview = new ActiveScanPreviewState(ship, layer, bow, forward);
+        return true;
+    }
+
+    public bool RotateActiveScan(int quarterTurns)
+    {
+        if (activeScanPreview == null || quarterTurns == 0)
+        {
+            return false;
+        }
+
+        activeScanPreview.Rotate(quarterTurns);
+        return true;
+    }
+
+    public bool ConfirmActiveScan()
+    {
+        if (activeScanPreview == null || match == null)
+        {
+            return false;
+        }
+
+        Fog.RunActiveSearch(
+            activeScanPreview.Ship,
+            activeScanPreview.Layer,
+            activeScanPreview.Bow,
+            activeScanPreview.Forward,
+            match);
+        activeScanPreview = null;
+        return true;
+    }
+
+    public void CancelActiveScan()
+    {
+        activeScanPreview = null;
     }
 
     public bool ConfirmProvisionalMovement()
@@ -420,13 +482,14 @@ public class GridManager : MonoBehaviour
         }
         else if (newPhase == Phase.Search)
         {
-            // Passive refresh first, then this turn's active scan on top of it.
+            // Passive vision remains automatic; active scans require player activation.
             Fog.RecomputeAllPassive(match);
-            Fog.RunActiveSearch(turnManager.CurrentPlayer, match);
+            activeScanPreview = null;
         }
         else if (newPhase == Phase.End)
         {
             Fog.ClearAllActiveMarks();
+            activeScanPreview = null;
         }
         // Staging's actual actions (mines, planes, repair) aren't built yet.
     }
