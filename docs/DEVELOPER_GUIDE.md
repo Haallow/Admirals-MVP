@@ -110,8 +110,8 @@ in the scene and is intentionally separate from gameplay authority.
 
 - Obstacles will block movement through Dijkstra pathfinding and also block
   line of sight.
-- Movement is provisional: preview first, then confirm at phase end; pointer/drag
-  input and visual previews remain future work.
+- Movement is provisional: keyboard and pointer/drag input preview through the
+  same API, then confirm at phase end; visual previews remain read-only.
 - Active scanning will become player-chosen, including shape, direction, and
   rotatable cones; it will no longer run automatically.
 - Staging will gain mines, planes, and a repair ship with self-heal behavior.
@@ -1138,7 +1138,7 @@ an approximate debug drawing, not the authoritative detection result.
 | Combat resolution | d20 tier damage and destroyed-ship cleanup. | Armor, defense saves, charge spending/recharge, side effects. |
 | AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
 | Deployment | Both players receive Wolf and Athena at hardcoded anchors. | Validated deployment path and player-controlled deployment. |
-| Movement | Keyboard movement creates read-only provisional previews from the movement-phase snapshot. Enter confirms, Escape or C cancels back to the movement-phase positions, and Space confirms before leaving Move. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Pointer/drag input, movement/path visualization, and richer movement UI. |
+| Movement | Keyboard and pointer dragging create read-only provisional previews from the movement-phase snapshot. Enter confirms, Escape or C cancels back to the movement-phase positions, and Space confirms before leaving Move. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Richer movement UI. |
 | Cleanup | Terrain, board, cone, and halo verification Gizmos remain; temporary fog logs and cone-count commands are removed. | Remove other prototype-only verification helpers when no longer useful. |
 | Match end | Dead ships are removed from grid and live fleet. | Win-condition/game-over handling. |
 

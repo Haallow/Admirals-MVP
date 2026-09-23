@@ -18,6 +18,8 @@ public class TestShipController : MonoBehaviour
 
     // Index into the current ship's weapons list — which weapon HandleAttackInput uses.
     private int selectedWeaponIndex = 0;
+    private bool isDraggingMovement;
+    private Vector2Int lastDragCell;
 
     private void Update()
     {
@@ -125,6 +127,8 @@ public class TestShipController : MonoBehaviour
             return;
         }
 
+        HandlePointerMovement(ship);
+
         Vector2Int direction = Vector2Int.zero;
         if (Input.GetKeyDown(KeyCode.UpArrow))    direction = Vector2Int.up;
         else if (Input.GetKeyDown(KeyCode.DownArrow))  direction = Vector2Int.down;
@@ -160,6 +164,75 @@ public class TestShipController : MonoBehaviour
                 Debug.Log($"Previewed rotation to {candidateRotation}");
             }
         }
+    }
+
+    private void HandlePointerMovement(ShipInstance ship)
+    {
+        if (Camera.main == null)
+        {
+            return;
+        }
+
+        if (Input.GetMouseButtonDown(0))
+        {
+            Vector2Int pressedCell = GetMouseGridCell();
+            if (IsShipPreviewCell(ship, pressedCell))
+            {
+                isDraggingMovement = true;
+                lastDragCell = pressedCell;
+            }
+        }
+
+        if (!isDraggingMovement)
+        {
+            return;
+        }
+
+        Vector2Int currentCell = GetMouseGridCell();
+        if (currentCell != lastDragCell)
+        {
+            lastDragCell = currentCell;
+            if (!gridManager.PreviewMove(
+                    ship,
+                    currentCell,
+                    GetPreviewRotation(ship)))
+            {
+                Debug.Log($"Pointer move preview rejected at {currentCell}; the ship remains at its last valid preview.");
+            }
+            else
+            {
+                Debug.Log($"Pointer-previewed move to {currentCell}");
+            }
+        }
+
+        if (Input.GetMouseButtonUp(0))
+        {
+            isDraggingMovement = false;
+            Debug.Log("Pointer movement released; provisional movement remains unconfirmed.");
+        }
+    }
+
+    private Vector2Int GetMouseGridCell()
+    {
+        Vector3 mouseScreen = Input.mousePosition;
+        mouseScreen.z = -Camera.main.transform.position.z;
+        Vector3 mouseWorld = Camera.main.ScreenToWorldPoint(mouseScreen);
+        return new Vector2Int(
+            Mathf.RoundToInt(mouseWorld.x / gridManager.CellSize),
+            Mathf.RoundToInt(mouseWorld.y / gridManager.CellSize));
+    }
+
+    private bool IsShipPreviewCell(ShipInstance ship, Vector2Int cell)
+    {
+        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+        {
+            if (state.Ship == ship && state.GetPreviewCells().Contains(cell))
+            {
+                return true;
+            }
+        }
+
+        return ship.GetOccupiedCells().Contains(cell);
     }
 
     private Vector2Int GetPreviewAnchor(ShipInstance ship)
