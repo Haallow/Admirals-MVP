@@ -168,21 +168,15 @@ public class GridView : MonoBehaviour
     private void DrawDebugCones()
     {
         // TEMPORARY: Cone overlay is visualization only and does not resolve scans.
-        if (gridManager.Match == null) return;
+        if (gridManager.ActiveScanPreview == null) return;
         Gizmos.color = new Color(1f, 0.9f, 0f, 0.6f);
 
-        foreach (var ship in gridManager.Match.AllShips())
+        ActiveScanPreviewState preview = gridManager.ActiveScanPreview;
+        foreach (var c in preview.GetConeCells())
         {
-            foreach (var layer in ship.visionLayers)
-            {
-                if (layer.isPassive || layer.shape != ShapeType.Cone) continue;
-
-                VisionResolver.GetBowAndFacing(ship, out Vector2Int bow, out Vector2Int forward);
-                foreach (var c in VisionResolver.GetConeCells(bow, forward, layer.range))
-                {
-                    Gizmos.DrawWireCube(new Vector3(c.x * gridManager.CellSize, c.y * gridManager.CellSize, 0f), Vector3.one * gridManager.CellSize * 0.9f);
-                }
-            }
+            Gizmos.DrawWireCube(
+                new Vector3(c.x * gridManager.CellSize, c.y * gridManager.CellSize, 0f),
+                Vector3.one * gridManager.CellSize * 0.9f);
         }
     }
 

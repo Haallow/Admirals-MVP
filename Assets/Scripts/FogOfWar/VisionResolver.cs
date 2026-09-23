@@ -11,6 +11,17 @@ public static class VisionResolver
 
     public static List<Vector2Int> GetDetectedCells(ShipInstance source, VisionLayer layer, List<ShipInstance> enemies)
     {
+        GetBowAndFacing(source, out Vector2Int bow, out Vector2Int forward);
+        return GetDetectedCells(source, layer, enemies, bow, forward);
+    }
+
+    public static List<Vector2Int> GetDetectedCells(
+        ShipInstance source,
+        VisionLayer layer,
+        List<ShipInstance> enemies,
+        Vector2Int bow,
+        Vector2Int forward)
+    {
         var detected = new List<Vector2Int>();
 
         // Safety net: fleet lists drop destroyed ships, but a ship killed mid-phase must never scan.
@@ -28,7 +39,6 @@ public static class VisionResolver
         HashSet<Vector2Int> coneCells = null;
         if (layer.shape == ShapeType.Cone)
         {
-            GetBowAndFacing(source, out Vector2Int bow, out Vector2Int forward);
             coneCells = GetConeCells(bow, forward, layer.range);
         }
 
