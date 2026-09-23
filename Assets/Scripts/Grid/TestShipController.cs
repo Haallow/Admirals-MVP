@@ -1,26 +1,25 @@
 using UnityEngine;
 
+// Milestone test input, still throwaway, still not the real input system.
+//
+// New this round:
+//   - Tab cycles which of PlayerA's ships is currently controlled.
+//   - Number keys 1/2/3 pick which weapon HandleAttackInput will fire.
+// Both are needed now that PlayerA can have more than one ship on the board.
 public class TestShipController : MonoBehaviour
 {
     [SerializeField] private GridManager gridManager;
     [SerializeField] private TurnManager turnManager;
-    private Vector2Int deploymentCursor;
-    private int deploymentRotation;
-    private bool deploymentConfirmed;
 
-    private Vector2Int searchCursor;
-    private bool searchActivated;
-    private int searchPatternIndex;
-    private Phase lastObservedPhase = Phase.Deployment;
+    private Phase lastPhaseSeen;
 
-    private void Start()
-    {
-        if (gridManager != null)
-        {
-            int deploymentZoneWidth = (gridManager.Width - gridManager.DeploymentDeadSpaceColumns) / 2;
-            deploymentCursor = new Vector2Int(deploymentZoneWidth / 2, gridManager.Height / 2);
-        }
-    }
+    // Index into gridManager.Match.playerA.ships — which ship responds to input.
+    private int currentShipIndex = 0;
+
+    // Index into the current ship's weapons list — which weapon HandleAttackInput uses.
+    private int selectedWeaponIndex = 0;
+    private bool isDraggingMovement;
+    private Vector2Int lastDragCell;
 
     private void Update()
     {
@@ -64,12 +63,42 @@ public class TestShipController : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.Space))
         {
+            if (turnManager.CurrentPhase == Phase.Move &&
+                !gridManager.ConfirmProvisionalMovement())
+            {
+                Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
+                return;
+            }
+
             turnManager.AdvancePhase();
         }
 
-        ShipInstance ship = gridManager.TestShip;
+        if (gridManager == null || turnManager == null || gridManager.Match == null)
+        {
+            return;
+        }
 
-        // --- Domain toggle (ungated by phase/owner for now, same as before) ---
+        // All of PlayerA's ships, so ship-switching has something to cycle through.
+        var myShips = gridManager.Match.playerA.ships;
+        if (myShips.Count == 0)
+        {
+            return;
+        }
+
+        // --- Ship switching (works regardless of whose turn/phase it is,
+        // same as Space — just changes which ship future input targets) ---
+        currentShipIndex = Mathf.Min(currentShipIndex, myShips.Count - 1);
+
+        if (Input.GetKeyDown(KeyCode.Tab))
+        {
+            currentShipIndex = (currentShipIndex + 1) % myShips.Count;
+            selectedWeaponIndex = 0;
+            Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+        }
+
+        ShipInstance ship = myShips[currentShipIndex];
+
+        // --- Domain toggle (ungated by phase/owner, unchanged from before) ---
         if (Input.GetKeyDown(KeyCode.D))
         {
             ship.currentDomain = ship.currentDomain == DomainType.Surface
@@ -77,27 +106,67 @@ public class TestShipController : MonoBehaviour
                 : DomainType.Surface;
 
             Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
-            ship.LogStatBlock("Wolf Class [PlayerA] after domain toggle");
+            ship.LogStatBlock($"{ship.shipType} [PlayerA] after domain toggle");
         }
 
-        // --- Ownership gate applies to both Move and Battle actions below ---
         if (ship.owner != turnManager.CurrentPlayer)
         {
+            lastPhaseSeen = turnManager.CurrentPhase;
             return; // not this player's turn at all
         }
 
         if (turnManager.CurrentPhase == Phase.Move)
         {
+            // Just entered Move phase: snapshot EVERY one of this player's ships,
+            // not just the currently selected one. Otherwise switching ships
+            // mid-phase would let the newly selected ship dodge its own range
+            // check, since its anchorAtTurnStart would still be stale.
+            if (lastPhaseSeen != Phase.Move)
+            {
+                foreach (var s in myShips)
+                {
+                    s.anchorAtTurnStart = s.anchor;
+                }
+            }
+
             HandleMoveInput(ship);
         }
         else if (turnManager.CurrentPhase == Phase.Battle)
         {
+            HandleWeaponSelection(ship);
             HandleAttackInput(ship);
         }
+
+        lastPhaseSeen = turnManager.CurrentPhase;
     }
 
     private void HandleMoveInput(ShipInstance ship)
     {
+        if (Input.GetKeyDown(KeyCode.Return))
+        {
+            if (!gridManager.ConfirmProvisionalMovement())
+            {
+                Debug.LogWarning("Provisional movement is invalid and was not confirmed.");
+            }
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            gridManager.CancelProvisionalMovement();
+            Debug.Log("Provisional movement cancelled.");
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.C))
+        {
+            gridManager.CancelProvisionalMovement();
+            Debug.Log("Provisional movement cancelled; ships reverted to their movement-phase positions.");
+            return;
+        }
+
+        HandlePointerMovement(ship);
+
         Vector2Int direction = Vector2Int.zero;
         if (Input.GetKeyDown(KeyCode.UpArrow))    direction = Vector2Int.up;
         else if (Input.GetKeyDown(KeyCode.DownArrow))  direction = Vector2Int.down;
@@ -106,10 +175,14 @@ public class TestShipController : MonoBehaviour
 
         if (direction != Vector2Int.zero)
         {
-            Vector2Int candidateAnchor = ship.anchor + direction;
-            if (gridManager.MoveShip(ship, candidateAnchor, ship.rotationDegrees))
+            Vector2Int candidateAnchor = GetPreviewAnchor(ship) + direction;
+            if (!gridManager.PreviewMove(ship, candidateAnchor, GetPreviewRotation(ship)))
             {
-                Debug.Log($"Moved to {ship.anchor}");
+                Debug.Log($"Move preview rejected at {candidateAnchor}; the ship remains at its last valid preview.");
+            }
+            else
+            {
+                Debug.Log($"Previewed move to {candidateAnchor}");
             }
         }
 
@@ -119,118 +192,136 @@ public class TestShipController : MonoBehaviour
 
         if (rotationDelta != 0)
         {
-            int candidateRotation = ((ship.rotationDegrees + rotationDelta) % 360 + 360) % 360;
-            if (gridManager.MoveShip(ship, ship.anchor, candidateRotation))
+            int candidateRotation = ((GetPreviewRotation(ship) + rotationDelta) % 360 + 360) % 360;
+            if (!gridManager.PreviewMove(ship, GetPreviewAnchor(ship), candidateRotation))
             {
-                Debug.Log($"Rotated to {ship.rotationDegrees}");
+                Debug.Log($"Rotation preview rejected at {candidateRotation}; the ship remains at its last valid preview.");
+            }
+            else
+            {
+                Debug.Log($"Previewed rotation to {candidateRotation}");
             }
         }
     }
 
-    private void HandleDeploymentInput(ShipInstance ship)
+    private void HandlePointerMovement(ShipInstance ship)
     {
-        if (deploymentConfirmed)
+        if (Camera.main == null)
         {
             return;
         }
 
-        Vector2Int direction = Vector2Int.zero;
-        if (Input.GetKeyDown(KeyCode.UpArrow)) direction = Vector2Int.up;
-        else if (Input.GetKeyDown(KeyCode.DownArrow)) direction = Vector2Int.down;
-        else if (Input.GetKeyDown(KeyCode.LeftArrow)) direction = Vector2Int.left;
-        else if (Input.GetKeyDown(KeyCode.RightArrow)) direction = Vector2Int.right;
-
-        if (direction != Vector2Int.zero)
+        if (Input.GetMouseButtonDown(0))
         {
-            Vector2Int candidate = deploymentCursor + direction;
-            if (gridManager.CanDeployShip(ship, PlayerId.PlayerA, candidate, deploymentRotation, gridManager.DeploymentDeadSpaceColumns))
+            Vector2Int pressedCell = GetMouseGridCell();
+            if (IsShipPreviewCell(ship, pressedCell))
             {
-                deploymentCursor = candidate;
-                Debug.Log($"[Deployment] Player A cursor moved to {deploymentCursor}");
+                isDraggingMovement = true;
+                lastDragCell = pressedCell;
             }
         }
 
-        int rotationDelta = 0;
-        if (Input.GetKeyDown(KeyCode.Q)) rotationDelta = -90;
-        else if (Input.GetKeyDown(KeyCode.E)) rotationDelta = 90;
-
-        if (rotationDelta != 0)
+        if (!isDraggingMovement)
         {
-            int candidateRotation = ((deploymentRotation + rotationDelta) % 360 + 360) % 360;
-            if (gridManager.CanDeployShip(ship, PlayerId.PlayerA, deploymentCursor, candidateRotation, gridManager.DeploymentDeadSpaceColumns))
+            return;
+        }
+
+        Vector2Int currentCell = GetMouseGridCell();
+        if (currentCell != lastDragCell)
+        {
+            lastDragCell = currentCell;
+            if (!gridManager.PreviewMove(
+                    ship,
+                    currentCell,
+                    GetPreviewRotation(ship)))
             {
-                deploymentRotation = candidateRotation;
-                Debug.Log($"[Deployment] Player A rotation changed to {deploymentRotation}");
+                Debug.Log($"Pointer move preview rejected at {currentCell}; the ship remains at its last valid preview.");
+            }
+            else
+            {
+                Debug.Log($"Pointer-previewed move to {currentCell}");
             }
         }
 
-        if (Input.GetKeyDown(KeyCode.Return) && gridManager.DeployShip(ship, PlayerId.PlayerA, deploymentCursor, deploymentRotation, gridManager.DeploymentDeadSpaceColumns))
+        if (Input.GetMouseButtonUp(0))
         {
-            deploymentConfirmed = true;
-            gridManager.SetDeploymentPreview(ship, deploymentCursor, deploymentRotation, false);
-            Debug.Log($"[Deployment] Player A selected {deploymentCursor}, rotation {deploymentRotation}.");
-            turnManager.ConfirmDeployment(PlayerId.PlayerA);
+            isDraggingMovement = false;
+            Debug.Log("Pointer movement released; provisional movement remains unconfirmed.");
         }
     }
 
-    private void HandleSearchInput(ShipInstance ship)
+    private Vector2Int GetMouseGridCell()
     {
-        if (ship == null)
-        {
-            return;
-        }
+        Vector3 mouseScreen = Input.mousePosition;
+        mouseScreen.z = -Camera.main.transform.position.z;
+        Vector3 mouseWorld = Camera.main.ScreenToWorldPoint(mouseScreen);
+        return new Vector2Int(
+            Mathf.RoundToInt(mouseWorld.x / gridManager.CellSize),
+            Mathf.RoundToInt(mouseWorld.y / gridManager.CellSize));
+    }
 
-        if (searchActivated)
+    private bool IsShipPreviewCell(ShipInstance ship, Vector2Int cell)
+    {
+        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
         {
-            return;
-        }
-
-        Vector2Int direction = Vector2Int.zero;
-        if (Input.GetKeyDown(KeyCode.UpArrow)) direction = Vector2Int.up;
-        else if (Input.GetKeyDown(KeyCode.DownArrow)) direction = Vector2Int.down;
-        else if (Input.GetKeyDown(KeyCode.LeftArrow)) direction = Vector2Int.left;
-        else if (Input.GetKeyDown(KeyCode.RightArrow)) direction = Vector2Int.right;
-
-        if (direction != Vector2Int.zero)
-        {
-            searchCursor += direction;
-            gridManager.SetSearchPreview(ship, searchCursor, true);
-            return;
-        }
-
-        if (Input.GetKeyDown(KeyCode.Q))
-        {
-            searchPatternIndex = (searchPatternIndex - 1 + ship.searchPatterns.Count) % ship.searchPatterns.Count;
-            ship.selectedSearchPatternIndex = searchPatternIndex;
-            gridManager.SetSearchPreview(ship, searchCursor, true);
-            Debug.Log($"[Search] Selected pattern: {ship.GetSelectedSearchPattern().id}");
-            return;
-        }
-
-        if (Input.GetKeyDown(KeyCode.E))
-        {
-            searchPatternIndex = (searchPatternIndex + 1) % ship.searchPatterns.Count;
-            ship.selectedSearchPatternIndex = searchPatternIndex;
-            gridManager.SetSearchPreview(ship, searchCursor, true);
-            Debug.Log($"[Search] Selected pattern: {ship.GetSelectedSearchPattern().id}");
-            return;
-        }
-
-        if (Input.GetKeyDown(KeyCode.Return))
-        {
-            SearchPatternDefinition pattern = ship.GetSelectedSearchPattern();
-            if (pattern == null || !pattern.IsAvailable(ship))
+            if (state.Ship == ship && state.GetPreviewCells().Contains(cell))
             {
-                Debug.Log("[Search] Selected pattern is unavailable.");
-                return;
+                return true;
             }
-
-            searchActivated = true;
-            var detected = gridManager.ResolveSearch(ship, searchCursor);
-            gridManager.SetSearchPreview(ship, searchCursor, true);
-            Debug.Log($"[Search] Pattern {pattern.id} activated at {searchCursor}. Hit {detected.Count} enemy tile(s).");
-            turnManager.AdvancePhase();
         }
+
+        return ship.GetOccupiedCells().Contains(cell);
+    }
+
+    private Vector2Int GetPreviewAnchor(ShipInstance ship)
+    {
+        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+        {
+            if (state.Ship == ship)
+            {
+                return state.PreviewAnchor;
+            }
+        }
+
+        return ship.anchor;
+    }
+
+    private int GetPreviewRotation(ShipInstance ship)
+    {
+        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+        {
+            if (state.Ship == ship)
+            {
+                return state.PreviewRotation;
+            }
+        }
+
+        return ship.rotationDegrees;
+    }
+
+    // Number keys 1/2/3 pick which of the current ship's weapons will be used
+    // by HandleAttackInput. Out-of-range keys (e.g. pressing 3 on a 1-weapon
+    // ship) are ignored, index just doesn't change.
+    private void HandleWeaponSelection(ShipInstance ship)
+    {
+        int requestedIndex = -1;
+        if (Input.GetKeyDown(KeyCode.Alpha1)) requestedIndex = 0;
+        else if (Input.GetKeyDown(KeyCode.Alpha2)) requestedIndex = 1;
+        else if (Input.GetKeyDown(KeyCode.Alpha3)) requestedIndex = 2;
+
+        if (requestedIndex == -1)
+        {
+            return; // no number key pressed this frame
+        }
+
+        if (requestedIndex >= ship.weapons.Count)
+        {
+            Debug.Log($"Ship only has {ship.weapons.Count} weapon(s), no slot {requestedIndex + 1}.");
+            return;
+        }
+
+        selectedWeaponIndex = requestedIndex;
+        Debug.Log($"Selected weapon: {ship.weapons[selectedWeaponIndex].id}");
     }
 
     private void HandleAttackInput(ShipInstance ship)
@@ -253,8 +344,17 @@ public class TestShipController : MonoBehaviour
             return;
         }
 
-        WeaponProfile weaponToUse = ship.weapons[2]; // barebone: always first weapon for now
-        bool hit = gridManager.ResolveAttack(ship, clickedTile.Occupant, weaponToUse);
+        // selectedWeaponIndex was already bounds-checked in HandleWeaponSelection,
+        // but re-check here too in case the active ship was switched (Tab) after
+        // selecting a weapon on a different ship with more weapon slots.
+        if (selectedWeaponIndex >= ship.weapons.Count)
+        {
+            Debug.Log("Selected weapon slot doesn't exist on this ship.");
+            return;
+        }
+
+        WeaponProfile weaponToUse = ship.weapons[selectedWeaponIndex];
+        bool hit = gridManager.Combat.ResolveAttack(ship, clickedTile.Occupant, weaponToUse);
         Debug.Log(hit ? "Attack resolved." : "Attack rejected (ammo/domain/range).");
     }
 }

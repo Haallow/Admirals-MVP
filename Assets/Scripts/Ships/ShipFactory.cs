@@ -16,7 +16,7 @@ public static class ShipFactory
                 ShipData.BuildSwordFishClass(ship);
                 break;
         }
-
+        ship.shipType = type;
         return ship;
     }
 }

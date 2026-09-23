@@ -8,6 +8,11 @@ using UnityEngine;
 [Serializable]
 public class ShipInstance
 {
+    public ShipType shipType;
+
+    //The Vector Location of the ship at the start of the Movement phase
+    public Vector2Int anchorAtTurnStart;
+
     // --- Identity / ownership ---
     public PlayerId owner = PlayerId.PlayerA;
 

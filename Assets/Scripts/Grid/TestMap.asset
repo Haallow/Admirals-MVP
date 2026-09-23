@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dca084ed5fa780d4c9bdf3596c45dce3, type: 3}
+  m_Name: TestMap
+  m_EditorClassIdentifier: Assembly-CSharp::MapDefinition
+  width: 30
+  height: 15
+  terrainEntries:
+  - position: {x: 10, y: 10}
+    terrainType: 2
+    movementCost: 0
+  - position: {x: 10, y: 11}
+    terrainType: 1
+    movementCost: 2
+  - position: {x: 10, y: 12}
+    terrainType: 1
+    movementCost: 2
+  - position: {x: 10, y: 13}
+    terrainType: 1
+    movementCost: 2
+  - position: {x: 10, y: 14}
+    terrainType: 1
+    movementCost: 2
+  - position: {x: 10, y: 5}
+    terrainType: 2
+    movementCost: 0
+  - position: {x: 10, y: 7}
+    terrainType: 2
+    movementCost: 0
+  - position: {x: 10, y: 8}
+    terrainType: 2
+    movementCost: 0
+  - position: {x: 10, y: 9}
+    terrainType: 2
+    movementCost: 0
+  - position: {x: 10, y: 6}
+    terrainType: 2
+    movementCost: 0

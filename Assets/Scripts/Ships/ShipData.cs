@@ -8,7 +8,7 @@ public static class ShipData
         // --- Core stats ---
         ship.maxHealth = 1000;
         ship.armor = 50;
-        ship.movementRange = 3;
+        ship.movementRange = 6; //for testing
         ship.currentDomain = DomainType.Surface;
 
         ship.footprintOffsets = new List<Vector2Int>
@@ -118,7 +118,7 @@ public static class ShipData
             new VisionLayer(
                 id: "Default Absolute Vision",
                 shape: ShapeType.Halo,
-                range: 1,
+                range: 4,
                 detects: DomainType.Both,
                 visionType: VisionType.Absolute,
                 isPassive: true,
@@ -146,9 +146,9 @@ public static class ShipData
     public static void BuildAthenaClass(ShipInstance ship)
     {
         // --- Core stats ---
-        ship.maxHealth = 700;
-        ship.armor = 80;
-        ship.movementRange = 2;
+        ship.maxHealth = 2000;
+        ship.armor = 150;
+        ship.movementRange = 4;
         ship.currentDomain = DomainType.Surface;
 
         ship.footprintOffsets = new List<Vector2Int>
@@ -162,21 +162,87 @@ public static class ShipData
         ship.weapons = new List<WeaponProfile>
         {
             new WeaponProfile(
-                id: "Athena Cannon",
-                ammo: 5,
+                id: "Deck Gun",
+                ammo: null,
                 weaponRange: 6,
                 targetDomain: DomainType.Surface,
                 rollTiers: new List<RollTier>
                 {
+                    new RollTier(1, 10, "Miss", 0),
+                    new RollTier(11, 20, "Direct Hit", 300),
+                }
+            ),
+
+            new WeaponProfile(
+                id: "Anti-Ship Missile",
+                ammo: 2,
+                weaponRange: 8,
+                targetDomain: DomainType.Surface,
+                rollTiers: new List<RollTier>
+                {
+                    new RollTier(1, 3, "Miss", 0),
+                    new RollTier(4, 17, "Direct Hit", 500),
+                    new RollTier(18, 20, "Catastrophic Hit", 750)
+                }
+            ),
+
+            new WeaponProfile(
+                id: "Anti-Submarine Rocket",
+                ammo: 2,
+                weaponRange: 8,
+                targetDomain: DomainType.SubSurface,
+                rollTiers: new List<RollTier>
+                {
                     new RollTier(1, 5, "Miss", 0),
-                    new RollTier(6, 17, "Direct Hit", 600),
-                    new RollTier(18, 20, "Catastrophic Hit", 900)
+                    new RollTier(6, 20, "Direct Hit", 600)
                 }
             )
         };
 
-        ship.defenses = new List<DefenseProfile>();
-        ship.visionLayers = new List<VisionLayer>();
+        ship.defenses = new List<DefenseProfile>
+        {
+            new DefenseProfile(
+                id: "Evasive Manouvers",
+                uses: null,
+                validAgainst: DomainType.Both,
+                savingThrowTiers: new List<RollTier>
+                {
+                    new RollTier(1, 14, "Fail"),
+                    new RollTier(15, 20, "Hit Avoided")
+                }
+            ),
+
+            new DefenseProfile(
+                id: "Chaff & Flares",
+                uses: 2,
+                validAgainst: DomainType.Surface,
+                savingThrowTiers: new List<RollTier>
+                {
+                    new RollTier(1, 12, "Fail"),
+                    new RollTier(13, 20, "Hit Avoided")
+                }
+            )
+        };
+        ship.visionLayers = new List<VisionLayer>
+        {
+            new VisionLayer(
+                id: "Passive Radar & Sonar Array",
+                shape: ShapeType.Halo,
+                range: 2,
+                detects: DomainType.Both,
+                visionType: VisionType.Absolute,
+                isPassive: true
+            ),
+            
+            new VisionLayer(
+                id: "Active Search Sonar",
+                shape: ShapeType.Cone,
+                range: 2,
+                detects: DomainType.SubSurface,
+                visionType: VisionType.Sensor,
+                isPassive: false
+            )
+        };
         ship.InitializeCharges();
     }
 

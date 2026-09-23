@@ -225,7 +225,7 @@ Camera:
   far clip plane: 1000
   field of view: 34
   orthographic: 1
-  orthographic size: 5
+  orthographic size: 8.57
   m_Depth: -1
   m_CullingMask:
     serializedVersion: 2
@@ -250,7 +250,7 @@ Transform:
   m_GameObject: {fileID: 519420028}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 4.48, y: 4.53, z: -10}
+  m_LocalPosition: {x: 14.6, y: 6.99, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -509,6 +509,8 @@ GameObject:
   m_Component:
   - component: {fileID: 2082002265}
   - component: {fileID: 2082002264}
+  - component: {fileID: 2082002267}
+  - component: {fileID: 2082002266}
   m_Layer: 0
   m_Name: Grid Manager
   m_TagString: Untagged
@@ -528,45 +530,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8e8debe1e4251114480f9c5262a70181, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GridManager
-  width: 13
-  height: 10
+  width: 30
+  height: 15
   cellSize: 1
-  testShip:
-    owner: 0
-    anchor: {x: -4, y: 4}
-    rotationDegrees: 90
-    movementRange: 3
-    footprintOffsets:
-    - {x: 0, y: 0}
-    - {x: 1, y: 0}
-    - {x: 2, y: 0}
-    maxHealth: 100
-    currentHealth: 0
-    armor: 0
-    currentDomain: 0
-    weapons: []
-    defenses: []
-    visionLayers: []
-    weaponCharges: []
-    defenseCharges: []
-  obstructionShip:
-    owner: 0
-    anchor: {x: 0, y: 0}
-    rotationDegrees: 0
-    movementRange: 3
-    footprintOffsets:
-    - {x: 0, y: 0}
-    - {x: 1, y: 0}
-    - {x: 2, y: 0}
-    maxHealth: 100
-    currentHealth: 0
-    armor: 0
-    currentDomain: 0
-    weapons: []
-    defenses: []
-    visionLayers: []
-    weaponCharges: []
-    defenseCharges: []
+  mapDefinition: {fileID: 11400000, guid: 8a9d1764eda309d4da1327865f99eb42, type: 2}
+  turnManager: {fileID: 2082002266}
 --- !u!4 &2082002265
 Transform:
   m_ObjectHideFlags: 0
@@ -582,6 +550,36 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2082002266
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2082002263}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: acabf9912c622dc4b89da62779a2e320, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TurnManager
+  currentPlayer: 0
+  currentPhase: 0
+--- !u!114 &2082002267
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2082002263}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 43765414ddc885649b45b0ae92284a23, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GridView
+  gridManager: {fileID: 2082002264}
+  startingZoneWidth: 5
+  playerZoneColor: {r: 0, g: 0.35, b: 1, a: 0.18}
+  enemyZoneColor: {r: 1, g: 0.1, b: 0.1, a: 0.18}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

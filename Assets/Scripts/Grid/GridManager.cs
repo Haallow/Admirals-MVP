@@ -1,89 +1,86 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+// Board logic only, per the roadmap reorg. Combat moved to CombatResolver and
+// drawing moved to GridView. TestShip and ObstructionShip remain as temporary
+// prototype accessors for AIController.
 public class GridManager : MonoBehaviour
 {
     [Header("Grid Size")]
-    [SerializeField] private int width = 10;
-    [SerializeField] private int height = 10;
+    [SerializeField] public int width = 30;
+    [SerializeField] public int height = 15;
     [SerializeField] private float cellSize = 1f;
-    [SerializeField, Min(0)] private int deploymentDeadSpaceColumns = 2;
+    [SerializeField] private MapDefinition mapDefinition;
+
     [SerializeField] private TurnManager turnManager;
 
-    [Header("Test Ship (movable, owned by PlayerA)")]
-    [SerializeField] private ShipType testShipType = ShipType.WolfClass;
-    [SerializeField] private ShipInstance testShip;
-
-    [Header("Obstruction Ship (static, owned by PlayerB)")]
-    [SerializeField] private ShipType obstructionShipType = ShipType.WolfClass;
-    [SerializeField] private ShipInstance obstructionShip;
-
     private Dictionary<Vector2Int, Tile> tiles = new Dictionary<Vector2Int, Tile>();
-    private ShipInstance deploymentPreviewShip;
-    private Vector2Int deploymentPreviewAnchor;
-    private int deploymentPreviewRotation;
-    private bool showDeploymentPreview;
+    private Dictionary<ShipInstance, ProvisionalMovementState> provisionalMoves =
+        new Dictionary<ShipInstance, ProvisionalMovementState>();
 
-    private ShipInstance searchPreviewShip;
-    private Vector2Int searchPreviewAnchor;
-    private bool showSearchPreview;
-    private bool searchConfirmed;
-    private HashSet<Vector2Int> searchPatternCells = new HashSet<Vector2Int>();
-    private HashSet<Vector2Int> searchDetectedCells = new HashSet<Vector2Int>();
-
-    public ShipInstance TestShip => testShip;
-    public ShipInstance ObstructionShip => obstructionShip;
     public float CellSize => cellSize;
-    public int Width => width;
-    public int Height => height;
-    public int DeploymentDeadSpaceColumns => deploymentDeadSpaceColumns;
+
+    // Read-only exposure for GridView; nothing outside GridManager mutates this directly.
+    public IEnumerable<KeyValuePair<Vector2Int, Tile>> AllTiles => tiles;
+
+    private MatchState match;
+    public MatchState Match => match;
+    public ShipInstance TestShip => match.playerA.ships.Count > 0 ? match.playerA.ships[0] : null;
+    public ShipInstance ObstructionShip => match.playerB.ships.Count > 0 ? match.playerB.ships[0] : null;
+
+    public FogManager Fog { get; private set; }
+    public CombatResolver Combat { get; private set; }
 
     private void Awake()
     {
         BuildGrid();
+        Fog = new FogManager();
+        Combat = new CombatResolver(this);
+    }
+
+    private void OnValidate()
+    {
+        if (!Application.isPlaying)
+        {
+            BuildGrid();
+        }
     }
 
     private void Start()
     {
-        if (turnManager == null)
+        var playerA = new PlayerState(PlayerId.PlayerA, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
+        var playerB = new PlayerState(PlayerId.PlayerB, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
+        match = new MatchState(playerA, playerB);
+        DeploymentService.DeployAll(match, this);
+
+        if (turnManager != null)
         {
-            turnManager = FindAnyObjectByType<TurnManager>();
-        }
-
-        // Ship card data lives in ShipData/ShipFactory; GridManager only owns
-        // runtime placement, grid occupancy, and current prototype interactions.
-        testShip = ShipFactory.CreateShip(testShipType);
-        testShip.owner = PlayerId.PlayerA;
-        testShip.anchor = Vector2Int.zero;
-        testShip.rotationDegrees = 0;
-        testShip.LogStatBlock($"{testShipType} [PlayerA]");
-
-        obstructionShip = ShipFactory.CreateShip(obstructionShipType);
-        obstructionShip.owner = PlayerId.PlayerB;
-        obstructionShip.anchor = Vector2Int.zero;
-        obstructionShip.rotationDegrees = 0;
-        obstructionShip.LogStatBlock($"{obstructionShipType} [PlayerB]");
-    }
-
-
-    private void LogOccupiedCells(string label, ShipInstance ship)
-    {
-        foreach (var cell in ship.GetOccupiedCells())
-        {
-            Debug.Log($"{label} occupies {cell}");
+            turnManager.PhaseChanged += HandlePhaseChanged;
         }
     }
 
-    // Rectangular map for now. Milestone 5 can replace this with predefined layouts.
     private void BuildGrid()
     {
+        if (mapDefinition != null)
+        {
+            width = mapDefinition.width;
+            height = mapDefinition.height;
+        }
+
         tiles.Clear();
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
             {
                 Vector2Int pos = new Vector2Int(x, y);
-                tiles[pos] = new Tile(pos);
+                Tile tile = new Tile(pos);
+                if (mapDefinition != null &&
+                    mapDefinition.TryGetTerrain(pos, out TerrainType terrainType, out int movementCost))
+                {
+                    tile.SetTerrain(terrainType, movementCost);
+                }
+
+                tiles[pos] = tile;
             }
         }
     }
@@ -105,8 +102,228 @@ public class GridManager : MonoBehaviour
         return tile;
     }
 
-    // Assumes callers have already validated the cells. Use CanPlaceShip before
-    // moving or deploying so placement rules stay centralized.
+    public TerrainType GetTerrainType(Vector2Int pos)
+    {
+        Tile tile = GetTile(pos);
+        return tile != null ? tile.TerrainType : TerrainType.Impassable;
+    }
+
+    public bool IsTerrainPassable(Vector2Int pos)
+    {
+        Tile tile = GetTile(pos);
+        return tile != null && tile.IsPassable;
+    }
+
+    public int GetTerrainMovementCost(Vector2Int pos)
+    {
+        Tile tile = GetTile(pos);
+        return tile != null ? tile.MovementCost : 0;
+    }
+
+    public MovementPathResult CalculateMovementPath(
+        Vector2Int start,
+        Vector2Int destination,
+        int movementBudget,
+        ShipInstance movingShip = null)
+    {
+        return GridPathfinder.FindPath(this, start, destination, movementBudget, movingShip);
+    }
+
+    public MovementPathResult CalculateShipMovementPath(ShipInstance ship, Vector2Int destination)
+    {
+        if (ship == null)
+        {
+            return MovementPathResult.Unreachable();
+        }
+
+        return CalculateMovementPath(ship.anchor, destination, ship.movementRange, ship);
+    }
+
+    public HashSet<Vector2Int> CalculateReachableCells(ShipInstance ship)
+    {
+        if (ship == null)
+        {
+            return new HashSet<Vector2Int>();
+        }
+
+        return GridPathfinder.FindReachableCells(
+            this,
+            ship.anchor,
+            ship.movementRange,
+            ship);
+    }
+
+    public HashSet<Vector2Int> CalculateReachablePreviewAnchors(
+        ProvisionalMovementState state)
+    {
+        var validAnchors = new HashSet<Vector2Int>();
+        if (state == null)
+        {
+            return validAnchors;
+        }
+
+        foreach (Vector2Int anchor in CalculateReachableCells(state.Ship))
+        {
+            if (IsValidPreviewFootprint(state.Ship, anchor, state.PreviewRotation))
+            {
+                validAnchors.Add(anchor);
+            }
+        }
+
+        return validAnchors;
+    }
+
+    public IReadOnlyCollection<ProvisionalMovementState> ProvisionalMoves => provisionalMoves.Values;
+
+    public bool PreviewMove(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
+    {
+        if (ship == null)
+        {
+            return false;
+        }
+
+        EnsureMovementSnapshot(ship);
+        ProvisionalMovementState state = provisionalMoves[ship];
+        MovementPathResult path = CalculateMovementPath(
+            state.OriginalAnchor,
+            candidateAnchor,
+            ship.movementRange,
+            ship);
+
+        bool valid = path.CanMove && IsValidPreviewFootprint(ship, candidateAnchor, candidateRotation);
+        if (!valid)
+        {
+            return false;
+        }
+
+        state.SetPreview(candidateAnchor, candidateRotation, path, true);
+        return true;
+    }
+
+    public void CancelProvisionalMovement()
+    {
+        provisionalMoves.Clear();
+    }
+
+    public bool ConfirmProvisionalMovement()
+    {
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            if (!state.IsValid || !IsValidConfirmationFootprint(state))
+            {
+                return false;
+            }
+        }
+
+        Dictionary<ShipInstance, List<Vector2Int>> candidateCells =
+            new Dictionary<ShipInstance, List<Vector2Int>>();
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            candidateCells[state.Ship] = state.GetPreviewCells();
+        }
+
+        foreach (KeyValuePair<ShipInstance, List<Vector2Int>> candidate in candidateCells)
+        {
+            foreach (Vector2Int cell in candidate.Value)
+            {
+                foreach (KeyValuePair<ShipInstance, List<Vector2Int>> other in candidateCells)
+                {
+                    if (candidate.Key != other.Key && other.Value.Contains(cell))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            RemoveShip(state.Ship);
+        }
+
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            state.Ship.anchor = state.PreviewAnchor;
+            state.Ship.rotationDegrees = state.PreviewRotation;
+            PlaceShip(state.Ship, candidateCells[state.Ship]);
+        }
+
+        provisionalMoves.Clear();
+        return true;
+    }
+
+    private void EnsureMovementSnapshot(ShipInstance ship)
+    {
+        if (!provisionalMoves.ContainsKey(ship))
+        {
+            provisionalMoves[ship] = new ProvisionalMovementState(ship);
+        }
+    }
+
+    private bool IsValidPreviewFootprint(
+        ShipInstance ship,
+        Vector2Int candidateAnchor,
+        int candidateRotation)
+    {
+        List<Vector2Int> candidateCells =
+            FootprintUtil.GetWorldCells(candidateAnchor, ship.footprintOffsets, candidateRotation);
+
+        foreach (Vector2Int cell in candidateCells)
+        {
+            if (!IsInBounds(cell) || !IsTerrainPassable(cell))
+            {
+                return false;
+            }
+
+            Tile tile = GetTile(cell);
+            if (tile.Occupant != null && tile.Occupant != ship)
+            {
+                ProvisionalMovementState otherState;
+                if (!provisionalMoves.TryGetValue(tile.Occupant, out otherState) ||
+                    !otherState.GetPreviewCells().Contains(cell))
+                {
+                    return false;
+                }
+            }
+
+            foreach (ProvisionalMovementState otherState in provisionalMoves.Values)
+            {
+                if (otherState.Ship == ship)
+                {
+                    continue;
+                }
+
+                if (otherState.GetPreviewCells().Contains(cell))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsValidConfirmationFootprint(ProvisionalMovementState state)
+    {
+        List<ShipInstance> movingShips = new List<ShipInstance>(provisionalMoves.Keys);
+        foreach (Vector2Int cell in state.GetPreviewCells())
+        {
+            if (!IsInBounds(cell) || !IsTerrainPassable(cell))
+            {
+                return false;
+            }
+
+            Tile tile = GetTile(cell);
+            if (tile.Occupant != null &&
+                !movingShips.Contains(tile.Occupant))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public void PlaceShip(ShipInstance ship, List<Vector2Int> cells)
     {
         foreach (var cell in cells)
@@ -131,8 +348,6 @@ public class GridManager : MonoBehaviour
         }
     }
 
-    // Single validation path for deploy/move/rotate. Allows a ship to overlap its
-    // own current cells during rotation or same-ship movement checks.
     public bool CanPlaceShip(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
     {
         List<Vector2Int> candidateCells = FootprintUtil.GetWorldCells(candidateAnchor, ship.footprintOffsets, candidateRotation);
@@ -334,10 +549,9 @@ public class GridManager : MonoBehaviour
         return Mathf.Max(Mathf.Abs(a.x - b.x), Mathf.Abs(a.y - b.y));
     }
 
-    // Atomic move: all validation happens before the grid is mutated.
     public bool MoveShip(ShipInstance ship, Vector2Int newAnchor, int newRotationDegrees)
     {
-        int distance = DistanceBetween(ship.anchor, newAnchor);
+        int distance = DistanceBetween(ship.anchorAtTurnStart, newAnchor);
         if (distance > ship.movementRange)
         {
             Debug.Log($"Move rejected: distance {distance} exceeds movement range {ship.movementRange}.");
@@ -357,187 +571,50 @@ public class GridManager : MonoBehaviour
         return true;
     }
 
-    // Prototype visualization: cyan is PlayerA's test ship, red is PlayerB.
-    private void OnDrawGizmos()
+    private void HandlePhaseChanged(Phase newPhase)
     {
-        if (!Application.isPlaying)
+        if (newPhase == Phase.Move)
         {
-            DrawEmptyGridPreview();
-            DrawDeploymentDeadSpace();
-            return;
-        }
-
-        foreach (var kvp in tiles)
-        {
-            Vector2Int pos = kvp.Key;
-            Tile tile = kvp.Value;
-            Vector3 worldPos = new Vector3(pos.x * cellSize, pos.y * cellSize, 0f);
-
-            bool hidePlayerBShip = turnManager != null &&
-                turnManager.CurrentPhase == Phase.Deployment &&
-                tile.Occupant != null &&
-                tile.Occupant.owner == PlayerId.PlayerB;
-
-            if (tile.Occupant != null && !hidePlayerBShip)
+            provisionalMoves.Clear();
+            if (match != null)
             {
-                Gizmos.color = tile.Occupant == testShip ? Color.cyan : Color.red;
-                Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.9f);
-            }
-            else
-            {
-                Gizmos.color = Color.gray;
-                Gizmos.DrawWireCube(worldPos, Vector3.one * cellSize * 0.95f);
-            }
-        }
-
-        DrawDeploymentDeadSpace();
-
-        if (showDeploymentPreview && deploymentPreviewShip != null)
-        {
-            Gizmos.color = new Color(0.15f, 0.55f, 1f, 0.35f);
-            foreach (Vector2Int cell in FootprintUtil.GetWorldCells(deploymentPreviewAnchor, deploymentPreviewShip.footprintOffsets, deploymentPreviewRotation))
-            {
-                Vector3 worldPos = new Vector3(cell.x * cellSize, cell.y * cellSize, -0.1f);
-                Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.9f);
-            }
-        }
-
-        if (showSearchPreview && searchPreviewShip != null)
-        {
-            SearchPatternDefinition pattern = searchPreviewShip.GetSelectedSearchPattern();
-            if (pattern != null)
-            {
-                Gizmos.color = searchConfirmed
-                    ? new Color(0.15f, 0.75f, 1f, 0.18f)
-                    : new Color(0.15f, 0.75f, 1f, 0.28f);
-                foreach (var cell in pattern.GetCells(searchPreviewAnchor, searchPreviewShip.rotationDegrees))
+                foreach (ShipInstance ship in turnManager.CurrentPlayer == PlayerId.PlayerA
+                    ? match.playerA.ships
+                    : match.playerB.ships)
                 {
-                    if (!IsInBounds(cell))
-                    {
-                        continue;
-                    }
-
-                    Vector3 worldPos = new Vector3(cell.x * cellSize, cell.y * cellSize, -0.2f);
-                    Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.8f);
-                }
-
-                if (searchConfirmed)
-                {
-                    Gizmos.color = new Color(1f, 0.55f, 0f, 0.85f);
-                    foreach (var detectedCell in searchDetectedCells)
-                    {
-                        Vector3 worldPos = new Vector3(detectedCell.x * cellSize, detectedCell.y * cellSize, -0.15f);
-                        Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.7f);
-                    }
+                    provisionalMoves[ship] = new ProvisionalMovementState(ship);
                 }
             }
         }
-    }
-
-    // Scene-view grid preview before Play Mode builds the runtime tile dictionary.
-    private void DrawEmptyGridPreview()
-    {
-        for (int x = 0; x < width; x++)
+        else if (newPhase == Phase.Staging)
         {
-            for (int y = 0; y < height; y++)
+            if (!ConfirmProvisionalMovement())
             {
-                Vector3 worldPos = new Vector3(x * cellSize, y * cellSize, 0f);
-                Gizmos.color = Color.gray;
-                Gizmos.DrawWireCube(worldPos, Vector3.one * cellSize * 0.95f);
+                Debug.LogWarning("Provisional movement confirmation failed; no ships were moved.");
             }
         }
+        else if (newPhase == Phase.Search)
+        {
+            // Passive refresh first, then this turn's active scan on top of it.
+            Fog.RecomputeAllPassive(match);
+            Fog.RunActiveSearch(turnManager.CurrentPlayer, match);
+        }
+        else if (newPhase == Phase.End)
+        {
+            Fog.ClearAllActiveMarks();
+        }
+        // Staging's actual actions (mines, planes, repair) aren't built yet.
     }
 
-    private void DrawDeploymentDeadSpace()
+    [ContextMenu("Debug Recompute Fog")]
+    private void DebugRecomputeFog()
     {
-        int safeDeadSpaceColumns = Mathf.Clamp(deploymentDeadSpaceColumns, 0, width);
-        int zoneWidth = (width - safeDeadSpaceColumns) / 2;
-        if (zoneWidth <= 0)
+        Fog.RecomputeAllPassive(match);
+        foreach (var ship in match.AllShips())
         {
-            return;
+            PlayerId viewer = ship.owner == PlayerId.PlayerA ? PlayerId.PlayerB : PlayerId.PlayerA;
+            foreach (var cell in ship.GetOccupiedCells())
+                Debug.Log($"{viewer} sees {ship.owner} ship at {cell}: {Fog.GetFogGrid(viewer).GetState(cell)}");
         }
-
-        Gizmos.color = new Color(1f, 0.75f, 0.15f, 0.18f);
-        for (int x = zoneWidth; x < width - zoneWidth; x++)
-        {
-            for (int y = 0; y < height; y++)
-            {
-                Vector3 worldPos = new Vector3(x * cellSize, y * cellSize, 0.1f);
-                Gizmos.DrawCube(worldPos, Vector3.one * cellSize * 0.9f);
-            }
-        }
-    }
-
-    // Temporary combat resolver for the prototype. A later Combat system can own
-    // this, but keeping the hook here avoids a larger refactor before fog gating.
-    public bool ResolveAttack(ShipInstance attacker, ShipInstance target, WeaponProfile weapon)
-    {
-        // Ammo/charge check.
-        ChargeState weaponCharge = FindChargeState(attacker.weaponCharges, weapon.id);
-        if (weaponCharge == null || !weaponCharge.IsReady)
-        {
-            return false;
-        }
-
-        // Weapon domain check.
-        bool domainMatches = weapon.targetDomain == target.currentDomain || weapon.targetDomain == DomainType.Both;
-        if (!domainMatches)
-        {
-            return false;
-        }
-
-        // Range check against any occupied target cell.
-        int minDistance = int.MaxValue;
-        foreach (var targetCell in target.GetOccupiedCells())
-        {
-            minDistance = Mathf.Min(minDistance, DistanceBetween(attacker.anchor, targetCell));
-        }
-
-        if (weapon.weaponRange < minDistance)
-        {
-            return false;
-        }
-
-        RollTier result = RollWeapon(weapon);
-        target.currentHealth -= result.damage;
-        Debug.Log($"{attacker.owner} fires {weapon.id} at {target.owner}: {result.outcomeLabel}" + (result.damage > 0 ? $" ({result.damage} dmg)" : ""));
-
-        if (target.currentHealth <= 0)
-        {
-            Debug.Log($"{target.owner}'s ship destroyed!");
-            RemoveShip(target);
-        }
-
-        return true;
-    }
-
-    // Roll one d20 and map it through the weapon's configured roll table.
-    private RollTier RollWeapon(WeaponProfile weapon)
-    {
-        int roll = Random.Range(1, 21);
-
-        foreach (var tier in weapon.rollTiers)
-        {
-            if (roll >= tier.minRoll && roll <= tier.maxRoll)
-            {
-                return tier;
-            }
-        }
-
-        Debug.LogWarning($"Roll {roll} did not match any tier on {weapon.id}. Check tier ranges.");
-        return new RollTier(0, 0, "Error", 0);
-    }
-
-    public ChargeState FindChargeState(List<ChargeState> charges, string profileId)
-    {
-        foreach (var charge in charges)
-        {
-            if (charge.profileId == profileId)
-            {
-                return charge;
-            }
-        }
-
-        return null;
     }
 }

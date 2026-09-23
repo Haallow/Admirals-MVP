@@ -2,6 +2,8 @@ public enum Phase
 {
     Deployment,
     Move,
+    Staging,
     Search,
-    Battle
+    Battle,
+    End
 }
