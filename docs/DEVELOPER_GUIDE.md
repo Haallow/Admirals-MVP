@@ -109,7 +109,11 @@ in the scene and is intentionally separate from gameplay authority.
 ### Locked 20-day roadmap decisions
 
 - Obstacles will block movement through Dijkstra pathfinding and also block
-  line of sight.
+  line of sight. Phase 9A is implemented with a supercover Bresenham LOS
+  traversal: only impassable terrain blocks, costly terrain remains
+  transparent while using distinct tile art, and corner-to-corner diagonal
+  gaps are blocked conservatively. Impassable terrain itself is always visible
+  as map geometry and is not a vision target.
 - Movement is provisional: keyboard and pointer/drag input preview through the
   same API. `Escape`/`C` cancels the preview, while `Space` commits all valid
   previews and immediately advances out of `Move`; visual previews remain
@@ -122,6 +126,10 @@ in the scene and is intentionally separate from gameplay authority.
   `CONE`), configured reveal type (`SENSOR` or `ABSOLUTE`), source ship,
   owner, layer, detected cells, and applied fog state. Non-passive scans always
   apply `Marked`, even if a layer is configured as `Absolute`.
+- The active Cone Gizmo uses the same supercover LOS check as `VisionResolver`.
+  Clear candidate cells use the normal preview color; cells beyond an
+  impassable blocker use a blocked color. The Gizmo remains visualization-only;
+  authoritative scan results continue to emit the distinct `FogManager` logs.
 - Staging will gain mines, planes, and a repair ship with self-heal behavior.
 - Basic UI will expose fog/scan toggles, health bars, phase/ship/weapon
   indicators, and movement/scan previews.
@@ -1140,7 +1148,7 @@ an approximate debug drawing, not the authoritative detection result.
 | --- | --- | --- |
 | Terrain | `MapDefinition` loads normal, costly, and impassable data into runtime `Tile` objects; unassigned maps default to all `Normal`. `GridPathfinder` consumes that data for read-only weighted routes. | Apply route results to movement, then add vision line-of-sight and attack line-of-fire rules. |
 | Fog storage | Two `FogGrid` objects, each with passive and active dictionaries. | Player-facing fog/visibility UI. |
-| Passive detection | `Search` recomputes live enemy cells using halo/cone rules and domain filters. | Additional shapes or line-of-sight, which are explicitly out of scope. |
+| Passive detection | `Search` recomputes live enemy cells using halo/cone rules and domain filters. | Terrain-blocked line-of-sight, with impassable terrain remaining visible as map geometry. |
 | Active Search | `Search` automatically runs every non-passive layer for every live acting-player ship; writes `Marked`. | Player-selected search action/aiming. |
 | Fog lifetime | Passive is rebuilt at `Search`; active is cleared at `End`; no ghost positions. | Persistent last-known markers, explicitly deferred. |
 | Combat gate | `ResolveAttack` calls `IsTargetKnown`; any marked/identified target cell is sufficient. | Combat reveal hook after firing. |
