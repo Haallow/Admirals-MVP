@@ -33,7 +33,9 @@ The remaining known gaps are:
 
 - `AIController` still targets Player A's first ship using global knowledge.
 - The AI still controls only Player B's first ship.
-- Active search is automatic and has no player-selected search action.
+- Active scanning is player-activated during Search: `S` opens the selected
+  ship's non-passive cone preview, `Q`/`E` rotate it, `Enter` confirms it, and
+  `Escape`/`C` cancels it. Passive vision remains automatic.
 - Fog state is internal runtime state; there is no player-facing visibility UI.
 - Armor, defense rolls, ammo consumption, recharge, and defense side effects are
   not implemented.
@@ -130,6 +132,14 @@ in the scene and is intentionally separate from gameplay authority.
   Clear candidate cells use the normal preview color; cells beyond an
   impassable blocker use a blocked color. The Gizmo remains visualization-only;
   authoritative scan results continue to emit the distinct `FogManager` logs.
+- Phase 9B is implemented: terrain-aware attack line of fire. Knowing a target
+  does not guarantee a clear shot. Only `Impassable` terrain blocks attacks;
+  `Normal` and `Costly` terrain remain transparent. `CombatResolver` reuses
+  the Phase 9A supercover Bresenham traversal via
+  `VisionResolver.TryGetFirstBlockingCell` and rejects fully-blocked attacks
+  before rolling, consuming ammunition, or applying damage. The AI's weapon
+  pre-check (`CanFire`) also applies the line-of-fire gate so it never scores
+  a weapon whose every in-range pair is blocked.
 - Staging will gain mines, planes, and a repair ship with self-heal behavior.
 - Basic UI will expose fog/scan toggles, health bars, phase/ship/weapon
   indicators, and movement/scan previews.
@@ -202,10 +212,10 @@ objects during `BuildGrid`. Without an assigned asset, the existing serialized
 - `Impassable`: not passable; its movement cost is `0`.
 
 `Tile.IsPassable`, `Tile.MovementCost`, and the corresponding
-`GridManager` terrain queries expose this data. Terrain cost is data only in
-this phase: current movement still uses its existing Chebyshev behavior and
-does not consume terrain cost. Vision line-of-sight and combat line-of-fire
-also do not use terrain yet.
+`GridManager` terrain queries expose this data. `GridPathfinder` consumes
+terrain cost for movement. Vision line-of-sight (Phase 9A) and attack
+line-of-fire (Phase 9B) both treat only `Impassable` terrain as blocking;
+`Normal` and `Costly` terrain are transparent to both.
 
 ### Runtime flow
 
@@ -227,8 +237,12 @@ TurnManager.AdvancePhase()
     └── invokes PhaseChanged
 
 GridManager.HandlePhaseChanged()
+    ├── Move    → snapshot provisional states for current player's ships
+    ├── Staging → confirm provisional movement atomically
     ├── Search  → Fog.RecomputeAllPassive(match)
-    │           → Fog.RunActiveSearch(CurrentPlayer, match)
+    │             (active scan is player-activated: S → ActivateActiveScan,
+    │              Q/E → RotateActiveScan, Enter → ConfirmActiveScan,
+    │              Escape/C → CancelActiveScan)
     └── End     → Fog.ClearAllActiveMarks()
 ```
 
@@ -265,9 +279,15 @@ Important members:
 #### `CombatResolver.cs` — `CombatResolver`
 
 Plain combat service created by `GridManager.Awake`. It owns attack validation,
-nearest-cell range checks, d20 damage resolution, and destroyed-ship cleanup.
-It uses `GridManager` only for board distance, occupancy removal, match state,
-and fog access.
+nearest-cell range checks, terrain line-of-fire validation, d20 damage
+resolution, and destroyed-ship cleanup. It uses `GridManager` only for board
+distance, occupancy removal, match state, and fog access.
+
+`HasClearLineOfFire` is a public helper that checks whether at least one
+in-range attacker/target cell pair has an unobstructed supercover Bresenham
+path. It delegates to `VisionResolver.TryGetFirstBlockingCell` so the same
+algorithm and corner-adjacency policy govern both vision LOS and attack
+line-of-fire.
 
 #### `GridView.cs` — `GridView : MonoBehaviour`
 
@@ -399,11 +419,9 @@ rotation `0`; Player B starts at `gridManager.width - 3`, rotation `180`.
 The 180-degree rotation makes Player B's footprints face back toward Player A.
 Each new ship receives its owner, anchor, rotation, and
 `anchorAtTurnStart`, is placed using `PlaceShip`, and is appended to the
-player's live list.
-
-Current limitation: `DeployFleet` calls `PlaceShip` directly rather than first
-calling `CanPlaceShip`. That is listed as Milestone 5 housekeeping and is not
-yet corrected.
+player's live list. `DeployFleet` calls `CanPlaceShip` before `PlaceShip`;
+ships that fail the placement check are skipped with a warning log rather
+than placed at an invalid position.
 
 ---
 
@@ -619,9 +637,11 @@ unless a current living ship detects it again.
 4. Dead enemies are skipped.
 5. A layer whose `detects` is not `Both` must equal the enemy's current domain.
 6. Only enemy occupied cells inside the shape are returned.
-
-There is no line-of-sight or obstacle blocking. `Tile.IsValid` is not consulted
-by the resolver, and off-board cone cells simply fail to match enemy cells.
+7. Each candidate cell is tested for line-of-sight using
+   `VisionResolver.TryGetFirstBlockingCell` (supercover Bresenham traversal).
+   Only `Impassable` intermediate cells block visibility; `Normal` and `Costly`
+   are transparent. A blocked cell is excluded from detected cells and recorded
+   in `VisionScanResult.BlockedCells` with the first blocking coordinate.
 
 ### Halo geometry
 
@@ -639,25 +659,33 @@ cells.
 
 ### Active detection
 
-Active detection runs automatically after passive recomputation on
-`Phase.Search`:
+Active scanning is player-activated during `Phase.Search`. Passive
+recomputation still runs automatically on entering Search, but the cone scan
+requires explicit player input:
 
 ```text
-TurnManager.AdvancePhase()
-  → PhaseChanged(Phase.Search)
-  → GridManager.HandlePhaseChanged(Phase.Search)
-  → FogManager.RecomputeAllPassive(match)
-  → FogManager.RunActiveSearch(CurrentPlayer, match)
+Player presses S during Search
+  → GridManager.ActivateActiveScan(ship)
+      → finds the ship's first non-passive Cone layer
+      → creates ActiveScanPreviewState (bow, forward)
+
+Player presses Q / E
+  → GridManager.RotateActiveScan(quarterTurns)
+      → rotates ActiveScanPreviewState.Forward
+
+Player presses Enter
+  → GridManager.ConfirmActiveScan()
+      → FogManager.RunActiveSearch(ship, layer, bow, forward, match)
+      → MarkActive(cell, Marked) for each detected cell
+      → clears ActiveScanPreviewState
+
+Player presses Escape / C
+  → GridManager.CancelActiveScan()
+      → discards ActiveScanPreviewState with no fog change
 ```
 
-`RecomputeAllPassive` rebuilds both passive fog views from the current live ship
-positions. `RunActiveSearch` gets the acting player's fog and the opposing live
-ship list.
-It iterates every ship in the acting player's live list and every non-passive
-vision layer. Each detected cell is written with `MarkActive(cell, Marked)`.
 Active scans deliberately write `Marked` even if the layer's definition says
-`Absolute`; the milestone rule is that active search reveals presence, not
-identity.
+`Absolute`; the rule is that active search reveals presence, not identity.
 
 The active layer is cleared when the phase becomes `End`:
 
@@ -759,17 +787,21 @@ attack path is `CombatResolver.ResolveAttack`.
 
 The current validation order is:
 
-1. Reject a dead target.
-2. Find the attacker's `ChargeState` by weapon id and require `IsReady`.
-3. Require the weapon target domain to match the target domain or be `Both`.
-4. Calculate the minimum Chebyshev distance between any attacker cell and any
-   target occupied cell.
-5. Reject if weapon range is less than that distance.
-6. Call `IsTargetKnown`.
-7. Roll one d20 with `RollWeapon`.
-8. Subtract the selected tier's damage from target health.
-9. If health reaches zero, remove the target from grid occupancy and its
-   owner's live `ships` list.
+1. Reject a dead target (logs reason).
+2. Find the attacker's `ChargeState` by weapon id and require `IsReady` (logs reason).
+3. Require the weapon target domain to match the target domain or be `Both` (logs reason).
+4. Iterate all attacker occupied cells × all target occupied cells to find the
+   minimum Chebyshev distance and collect every in-range pair.
+5. Reject if weapon range is less than that minimum distance (logs reason).
+6. Call `IsTargetKnown` — reject if no target cell is in the attacker's fog.
+7. Call `HasClearLineOfFire` on the in-range pairs. At least one pair must have
+   a clear supercover Bresenham path through intermediate cells; only
+   `Impassable` terrain blocks. Logs `BLOCKED_LINE_OF_FIRE` with attacker,
+   weapon, target, pair, and first blocker when every pair is blocked.
+8. Roll one d20 with `RollWeapon`.
+9. Subtract the selected tier's damage from target health.
+10. If health reaches zero, remove the target from grid occupancy and its
+    owner's live `ships` list.
 
 `IsTargetKnown` gets the attacker's fog grid and returns true if any target
 occupied cell has a non-`Unknown` state. It does not require every target cell
@@ -777,8 +809,9 @@ to be known. This means a multi-cell target can be attacked when only one of its
 cells is detected.
 
 `ResolveAttack` does not currently consume ammo, apply armor, run defenses, or
-reveal a target after a successful attack. It returns true when resolution was
-performed, including a d20 miss with zero damage.
+reveal a target after a successful attack. It returns `true` when resolution was
+performed (including a d20 miss). It returns `false` on any rejection, with a
+log identifying the cause.
 
 ### AI attack path
 
@@ -891,8 +924,9 @@ For each card type, `DeployFleet`:
 8. Logs the stat block.
 
 Player B is rotated 180 degrees so the same footprint definitions face toward
-the center of the map from the opposite side. The current code assumes the
-hardcoded anchors are legal; it does not call `CanPlaceShip` before placement.
+the center of the map from the opposite side. `DeployFleet` calls
+`CanPlaceShip` before `PlaceShip`; a ship that fails the placement check is
+skipped with a warning and not added to the player's fleet.
 
 ---
 
@@ -926,7 +960,6 @@ AdvancePhase: Staging → Search
   → PhaseChanged(Search)
   → GridManager.HandlePhaseChanged
   → FogManager.RecomputeAllPassive
-  → FogManager.RunActiveSearch(CurrentPlayer)
   → reset Player A passive dictionary
   → resolve Player A passive layers against Player B live ships
   → reset Player B passive dictionary
@@ -934,31 +967,47 @@ AdvancePhase: Staging → Search
 ```
 
 Each result is stored by enemy occupied cell, not as a full-board coverage map.
+Active scanning does not run automatically on Search; it requires player input.
 
-### Flow C: active Search
+### Flow C: player-activated active scan
 
 ```text
-The active scan follows passive recomputation in the same Search transition:
+Player presses S during Search
+  → TestShipController.HandleActiveScanInput
+  → GridManager.ActivateActiveScan(selectedShip)
+  → VisionResolver.GetBowAndFacing → derives bow and forward
+  → ActiveScanPreviewState created (ship, layer, bow, forward)
+  → GridView.DrawDebugCones renders the cone preview each frame
 
-  → iterate acting player's live ships
-  → iterate non-passive layers
-  → VisionResolver builds cone/halo and filters domains
-  → MarkActive(cell, Marked)
+Player presses Q or E
+  → GridManager.RotateActiveScan(±1)
+  → ActiveScanPreviewState.Rotate updates Forward
+  → preview updates in Scene view
+
+Player presses Enter
+  → GridManager.ConfirmActiveScan
+  → FogManager.RunActiveSearch(ship, layer, bow, forward, match)
+  → VisionResolver.GetScanResult builds cone, checks LOS per enemy cell
+  → MarkActive(cell, Marked) for each unblocked detected cell
+  → ActiveScanPreviewState cleared
 ```
 
-The current profiles use cone-shaped active layers. Active marks remain through
-Battle and are cleared at End.
+Active marks remain through Battle and are cleared at End.
 
 ### Flow D: Player A attacks
 
 ```text
-Mouse click
+Mouse click during Battle
   → convert screen position to Vector2Int
   → GetTile(clickedPos)
   → read Occupant
   → ResolveAttack
-      → dead/charge/domain/range checks
+      → dead / charge / domain checks (each logs reason on rejection)
+      → build in-range attacker×target cell pairs, check min distance
       → IsTargetKnown(Player A fog)
+      → HasClearLineOfFire: test each in-range pair via TryGetFirstBlockingCell
+          → at least one unblocked pair → proceed
+          → all pairs blocked → log BLOCKED_LINE_OF_FIRE, return false
       → d20 tier and damage
       → destroy cleanup if HP <= 0
 ```
@@ -1114,6 +1163,7 @@ AIController ------------------------------→ GridManager
 | Change stored fog state | `FogGrid` | It owns passive/active dictionaries and state upgrades. |
 | Change halo/cone geometry or domain filtering | `VisionResolver` | It is the stateless vision rules layer. |
 | Change attack legality/resolution | `CombatResolver.ResolveAttack` | This is the authoritative attack path, exposed through `GridManager.Combat`. |
+| Change terrain line-of-fire logic | `CombatResolver.HasClearLineOfFire` and `VisionResolver.TryGetFirstBlockingCell` | `HasClearLineOfFire` iterates in-range pairs; the supercover traversal lives in `VisionResolver`. |
 | Change Player A input | `TestShipController` | It should request manager operations rather than duplicate rules. |
 | Implement fog-aware AI | `AIController` plus `FogManager.GetFogGrid` | AI decisions need its own fog view; final attacks still use `CombatResolver.ResolveAttack`. |
 | Add armor/defenses/ammo spending | Future combat work around `CombatResolver.ResolveAttack`, `ChargeState`, and profiles | These definitions exist, but execution is not implemented. |
@@ -1146,15 +1196,17 @@ an approximate debug drawing, not the authoritative detection result.
 
 | System | Current implementation | Planned / missing |
 | --- | --- | --- |
-| Terrain | `MapDefinition` loads normal, costly, and impassable data into runtime `Tile` objects; unassigned maps default to all `Normal`. `GridPathfinder` consumes that data for read-only weighted routes. | Apply route results to movement, then add vision line-of-sight and attack line-of-fire rules. |
+| Terrain | `MapDefinition` loads normal, costly, and impassable data into runtime `Tile` objects; unassigned maps default to all `Normal`. `GridPathfinder` consumes that data for read-only weighted routes. | Additional terrain types if needed; no A* planned. |
+| Vision LOS | Phase 9A implemented: `VisionResolver.TryGetFirstBlockingCell` runs supercover Bresenham per candidate cell. Only `Impassable` blocks; `Costly` is transparent. Corner-adjacent blockers are handled conservatively. | Player-facing fog/visibility UI. |
+| Attack line-of-fire | Phase 9B implemented: `CombatResolver.HasClearLineOfFire` tests every in-range cell pair via the same supercover traversal. At least one clear pair allows the attack; all blocked → rejected before rolling. | — |
 | Fog storage | Two `FogGrid` objects, each with passive and active dictionaries. | Player-facing fog/visibility UI. |
-| Passive detection | `Search` recomputes live enemy cells using halo/cone rules and domain filters. | Terrain-blocked line-of-sight, with impassable terrain remaining visible as map geometry. |
-| Active Search | `Search` automatically runs every non-passive layer for every live acting-player ship; writes `Marked`. | Player-selected search action/aiming. |
+| Passive detection | `Search` recomputes live enemy cells using halo/cone rules, domain filters, and terrain LOS. | — |
+| Active Search | Player-activated during Search: `S` activates, `Q`/`E` rotates, `Enter` confirms, `Escape`/`C` cancels. Only the selected ship's non-passive cone layer is fired per activation. | Scanning for all living ships in a single Search phase. |
 | Fog lifetime | Passive is rebuilt at `Search`; active is cleared at `End`; no ghost positions. | Persistent last-known markers, explicitly deferred. |
 | Combat gate | `ResolveAttack` calls `IsTargetKnown`; any marked/identified target cell is sufficient. | Combat reveal hook after firing. |
-| Combat resolution | d20 tier damage and destroyed-ship cleanup. | Armor, defense saves, charge spending/recharge, side effects. |
-| AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
-| Deployment | Both players receive Wolf and Athena at hardcoded anchors. | Validated deployment path and player-controlled deployment. |
+| Combat resolution | d20 tier damage and destroyed-ship cleanup. All rejections log their cause. | Armor, defense saves, charge spending/recharge, side effects. |
+| AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. `CanFire` pre-check includes terrain line-of-fire gate. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
+| Deployment | Both players receive Wolf and Athena at hardcoded anchors. `CanPlaceShip` validation runs before each placement. | Player-controlled deployment. |
 | Movement | Keyboard and pointer dragging create read-only provisional previews from the movement-phase snapshot. Escape or C cancels back to the movement-phase positions, and Space commits all valid previews before leaving Move. `Enter` is not a movement commit key. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Richer movement UI. |
 | Cleanup | Terrain, board, cone, and halo verification Gizmos remain; temporary fog logs and cone-count commands are removed. | Remove other prototype-only verification helpers when no longer useful. |
 | Match end | Dead ships are removed from grid and live fleet. | Win-condition/game-over handling. |
@@ -1212,19 +1264,25 @@ TestShipController→ prototype Player A input
 ### Method → purpose
 
 ```text
-GridManager.CanPlaceShip       → validate candidate footprint
-GridManager.MoveShip            → validate and atomically move/rotate a ship
-GridManager.Combat.ResolveAttack → authoritative current attack path
-GridManager.IsTargetKnown       → apply the fog attack gate
-ShipInstance.GetOccupiedCells   → calculate current world footprint
-ShipInstance.InitializeCharges  → initialize health and profile charges
-VisionResolver.GetDetectedCells→ find enemy cells detected by one layer
-VisionResolver.GetConeCells     → generate directional cone coordinates
-VisionResolver.GetBowAndFacing  → derive bow and facing from footprint
-FogManager.RecomputeAllPassive  → rebuild both passive fog views during Search
-FogManager.RunActiveSearch      → mark cells found by acting player's active layers during Search
-FogManager.ClearAllActiveMarks  → clear temporary search results
-TurnManager.AdvancePhase        → advance phase and raise PhaseChanged
+GridManager.CanPlaceShip            → validate candidate footprint
+GridManager.MoveShip                → validate and atomically move/rotate a ship
+GridManager.ActivateActiveScan      → begin player-controlled scan preview for a ship
+GridManager.RotateActiveScan        → rotate the active scan cone preview
+GridManager.ConfirmActiveScan       → resolve the active scan and write fog marks
+GridManager.CancelActiveScan        → discard scan preview with no fog change
+GridManager.Combat.ResolveAttack    → authoritative attack path (fog + LOS + d20)
+CombatResolver.HasClearLineOfFire   → test in-range cell pairs for terrain obstruction
+CombatResolver.IsTargetKnown        → apply the fog attack gate
+ShipInstance.GetOccupiedCells       → calculate current world footprint
+ShipInstance.InitializeCharges      → initialize health and profile charges
+VisionResolver.GetDetectedCells     → find enemy cells detected by one layer (with LOS)
+VisionResolver.TryGetFirstBlockingCell → supercover Bresenham LOS; returns first Impassable blocker
+VisionResolver.GetConeCells         → generate directional cone coordinates
+VisionResolver.GetBowAndFacing      → derive bow and facing from footprint
+FogManager.RecomputeAllPassive      → rebuild both passive fog views during Search
+FogManager.RunActiveSearch          → mark cells found by one ship's active scan layer
+FogManager.ClearAllActiveMarks      → clear temporary search results at End
+TurnManager.AdvancePhase            → advance phase and raise PhaseChanged
 ```
 
 ### System → main entry point
@@ -1234,7 +1292,7 @@ Grid             → GridManager.Awake / Start
 Deployment       → DeploymentService.DeployAll
 Turns            → TurnManager.AdvancePhase
 Passive fog      → GridManager.HandlePhaseChanged(Search)
-Active fog       → GridManager.HandlePhaseChanged(Search)
+Active fog       → GridManager.ActivateActiveScan / ConfirmActiveScan (player-triggered)
 Combat           → GridManager.Combat.ResolveAttack
 Player input     → TestShipController.Update
 AI               → AIController.Update

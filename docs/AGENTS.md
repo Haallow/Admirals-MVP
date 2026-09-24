@@ -20,7 +20,9 @@ Known gaps still present in the prototype:
 
 - `AIController` still targets Player A's first ship using global knowledge.
 - The AI still only controls Player B's first ship.
-- Search is automatic; there is no player-selected search action.
+- Active scanning is player-activated during Search: `S` opens the selected
+  ship's non-passive cone preview, `Q`/`E` rotate it, `Enter` confirms it, and
+  `Escape`/`C` cancels it. Passive vision remains automatic.
 - Fog state is runtime-only; there is no player-facing UI.
 - Armor, defense rolls, ammo consumption, recharge, and defense side effects are not implemented.
 - There is no win-condition/game-over flow.
@@ -91,12 +93,16 @@ TurnManager.AdvancePhase()
   -> invokes PhaseChanged
 
 GridManager.HandlePhaseChanged()
-  -> Search -> Fog.RecomputeAllPassive(match)
-  -> Search -> Fog.RunActiveSearch(CurrentPlayer, match)
-  -> End -> Fog.ClearAllActiveMarks()
+  -> Move    -> snapshot provisional states for current player's ships
+  -> Staging -> confirm provisional movement atomically
+  -> Search  -> Fog.RecomputeAllPassive(match)
+              (active scan requires player activation via ActivateActiveScan /
+               ConfirmActiveScan — it is not triggered automatically)
+  -> End     -> Fog.ClearAllActiveMarks()
 ```
 
-The event flow is one-way: `TurnManager` raises `PhaseChanged`, and subscribers react without the turn system knowing about fog, ships, or the grid.
+The event flow is one-way: `TurnManager` raises `PhaseChanged`, and subscribers
+react without the turn system knowing about fog, ships, or the grid.
 
 ## File-by-file operating model
 
@@ -253,20 +259,34 @@ cleared at `End`.
 
 The current authoritative attack flow in `CombatResolver.ResolveAttack` is:
 
-1. Reject dead target.
-2. Verify weapon charge readiness.
-3. Require target-domain compatibility.
-4. Compute minimum Chebyshev distance from the attacker anchor to target occupied cells.
-5. Reject if range is insufficient.
+1. Reject dead target (logs reason).
+2. Verify weapon charge readiness (logs reason).
+3. Require target-domain compatibility (logs reason).
+4. Compute minimum Chebyshev distance across all attacker occupied cells ×
+   all target occupied cells. Collect every in-range pair for step 6.
+5. Reject if no cell pair is within weapon range (logs reason).
 6. Check fog knowledge via `IsTargetKnown`.
-7. Roll one d20 and apply selected tier damage.
-8. If health reaches zero, remove the target from grid occupancy and from the owner's live ship list.
+7. Check terrain line-of-fire via `HasClearLineOfFire`: the attack is legal
+   when at least one in-range pair has a clear supercover Bresenham path
+   through the grid. Only `Impassable` terrain blocks; `Normal` and `Costly`
+   are transparent. Attacker and target endpoint cells are excluded from the
+   blocker test. Logs `BLOCKED_LINE_OF_FIRE` with the first blocking cell when
+   every pair is blocked.
+8. Roll one d20 and apply selected tier damage.
+9. If health reaches zero, remove the target from grid occupancy and from the
+   owner's live ship list.
 
 Notes:
 
 - Ammo consumption, armor, defenses, and side effects are not implemented yet.
-- The attack gate currently checks knowledge at the cell level, not every cell of a multi-cell ship.
-- `ResolveAttack` returns true even on a miss, when resolution was performed.
+- The fog attack gate checks knowledge at the cell level; any one known cell
+  on a multi-cell target is sufficient.
+- `ResolveAttack` returns `true` even on a d20 miss, when resolution was
+  performed. It returns `false` on any rejection, with a log identifying the
+  cause.
+- `HasClearLineOfFire` reuses `VisionResolver.TryGetFirstBlockingCell` so the
+  same supercover Bresenham algorithm and corner-adjacency policy govern both
+  vision LOS (Phase 9A) and attack line-of-fire (Phase 9B).
 
 ## AI implementation status
 
@@ -295,7 +315,8 @@ Current deployment assumptions:
 
 - Player A starts at `anchorX = 1`, facing `0` degrees.
 - Player B starts at `gridManager.width - 3`, facing `180` degrees.
-- `DeployFleet` currently calls `PlaceShip` directly rather than `CanPlaceShip` first.
+- `DeployFleet` calls `CanPlaceShip` before `PlaceShip`; ships that fail
+  validation are skipped with a warning log.
 
 ## Safe change guidance
 
@@ -318,6 +339,7 @@ When making changes, prefer these locations:
 | Change stored fog state | `FogGrid` |
 | Change halo/cone geometry or domain filtering | `VisionResolver` |
 | Change attack legality and damage resolution | `CombatResolver.ResolveAttack` via `GridManager.Combat` |
+| Change terrain line-of-fire logic | `CombatResolver.HasClearLineOfFire` via `VisionResolver.TryGetFirstBlockingCell` |
 | Change Player A input | `TestShipController` |
 | Implement fog-aware AI | `AIController`, `FogManager.GetFogGrid` |
 
@@ -351,10 +373,12 @@ These are valid for prototype validation but should not be treated as final game
 If you need to add or modify behavior in this project, start by reading:
 
 - `Assets/Scripts/Grid/GridManager.cs`
+- `Assets/Scripts/Combat/CombatResolver.cs`
 - `Assets/Scripts/FogOfWar/FogManager.cs`
 - `Assets/Scripts/FogOfWar/VisionResolver.cs`
 - `Assets/Scripts/Turns/TurnManager.cs`
 - `Assets/Scripts/Ships/ShipInstance.cs`
 - `Assets/Scripts/AI/AIController.cs`
 
-These are the highest-leverage files for board logic, fog, turn flow, and prototype AI.
+These are the highest-leverage files for board logic, combat (including
+line-of-fire), fog, turn flow, and prototype AI.
