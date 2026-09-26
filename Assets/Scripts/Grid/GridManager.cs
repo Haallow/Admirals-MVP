@@ -36,7 +36,7 @@ public class GridManager : MonoBehaviour
     private void Awake()
     {
         BuildGrid();
-        Fog = new FogManager();
+        Fog = new FogManager(this);
         Combat = new CombatResolver(this);
     }
 

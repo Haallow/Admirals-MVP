@@ -357,6 +357,6 @@ public class TestShipController : MonoBehaviour
 
         WeaponProfile weaponToUse = ship.weapons[selectedWeaponIndex];
         bool hit = gridManager.Combat.ResolveAttack(ship, clickedTile.Occupant, weaponToUse);
-        Debug.Log(hit ? "Attack resolved." : "Attack rejected (ammo/domain/range).");
+        Debug.Log(hit ? "Attack resolved." : "Attack rejected.");
     }
 }

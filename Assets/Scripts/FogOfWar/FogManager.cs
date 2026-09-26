@@ -4,8 +4,14 @@ using UnityEngine;
 // Decides *when* vision runs and who it runs for. The rules themselves live in VisionResolver.
 public class FogManager
 {
+    private readonly GridManager gridManager;
     private readonly FogGrid playerAFog = new FogGrid();
     private readonly FogGrid playerBFog = new FogGrid();
+
+    public FogManager(GridManager gridManager)
+    {
+        this.gridManager = gridManager;
+    }
 
     public FogGrid GetFogGrid(PlayerId owner)
     {
@@ -33,8 +39,9 @@ public class FogManager
 
         FogGrid fog = GetFogGrid(ship.owner);
         List<ShipInstance> enemies = GetEnemyShips(ship.owner, match);
-        List<Vector2Int> detectedCells = VisionResolver.GetDetectedCells(
-            ship, layer, enemies, bow, forward);
+        VisionScanResult scan = VisionResolver.GetScanResult(
+            ship, layer, enemies, gridManager, bow, forward);
+        List<Vector2Int> detectedCells = scan.DetectedCells;
 
         // Active scans only ever Mark: they reveal that something is there, never what it is.
         LogScanSummary(
@@ -52,6 +59,8 @@ public class FogManager
                       $"ship={ship.shipType} owner={ship.owner} cell={cell} " +
                       "applied=Marked layer=active");
         }
+
+        LogBlockedCells("NON-PASSIVE", ship, layer, scan.BlockedCells);
     }
 
     public void ClearAllActiveMarks()
@@ -74,7 +83,13 @@ public class FogManager
 
                 // Absolute layers identify, Sensor layers only mark.
                 FogState result = layer.visionType == VisionType.Absolute ? FogState.Identified : FogState.Marked;
-                List<Vector2Int> detectedCells = VisionResolver.GetDetectedCells(ship, layer, enemies);
+                VisionResolver.GetBowAndFacing(
+                    ship,
+                    out Vector2Int bow,
+                    out Vector2Int forward);
+                VisionScanResult scan = VisionResolver.GetScanResult(
+                    ship, layer, enemies, gridManager, bow, forward);
+                List<Vector2Int> detectedCells = scan.DetectedCells;
 
                 LogScanSummary(
                     "PASSIVE",
@@ -91,7 +106,24 @@ public class FogManager
                               $"ship={ship.shipType} owner={ship.owner} cell={cell} " +
                               $"applied={result} layer=passive");
                 }
+
+                LogBlockedCells("PASSIVE", ship, layer, scan.BlockedCells);
             }
+        }
+    }
+
+    private static void LogBlockedCells(
+        string activation,
+        ShipInstance ship,
+        VisionLayer layer,
+        Dictionary<Vector2Int, Vector2Int> blockedCells)
+    {
+        foreach (KeyValuePair<Vector2Int, Vector2Int> blocked in blockedCells)
+        {
+            Debug.Log(
+                $"[VISION][{activation}][{ShapeLabel(layer)}][{VisionTypeLabel(layer)}] " +
+                $"ship={ship.shipType} owner={ship.owner} cell={blocked.Key} " +
+                $"result=BLOCKED blocker={blocked.Value}");
         }
     }
 
