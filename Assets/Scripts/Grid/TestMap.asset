@@ -45,3 +45,6 @@ MonoBehaviour:
   - position: {x: 10, y: 6}
     terrainType: 2
     movementCost: 0
+  - position: {x: 24, y: 4}
+    terrainType: 2
+    movementCost: 0

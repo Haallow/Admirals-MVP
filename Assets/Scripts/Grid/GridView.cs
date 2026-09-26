@@ -192,8 +192,13 @@ public class GridView : MonoBehaviour
     private void DrawDebugHalos()
     {
         // TEMPORARY: Halo overlay is visualization only and does not calculate fog state.
+        // Uses the same hull-cell range and supercover LOS check as VisionResolver so
+        // the Gizmo matches the authoritative detection result.
+        // Clear cells: cyan wire. Terrain-blocked cells: dark red wire.
         if (gridManager.Match == null) return;
-        Gizmos.color = new Color(0f, 0.8f, 1f, 1f);
+
+        Color clearColor   = new Color(0f,  0.8f, 1f,   1f);
+        Color blockedColor = new Color(0.6f, 0f,  0.05f, 0.7f);
 
         foreach (var ship in gridManager.Match.AllShips())
         {
@@ -208,16 +213,37 @@ public class GridView : MonoBehaviour
                     for (int y = 0; y < gridManager.height; y++)
                     {
                         Vector2Int cell = new Vector2Int(x, y);
+
+                        // Range check: any hull cell within Chebyshev range qualifies,
+                        // matching VisionResolver.IsWithinHalo exactly.
                         bool inRange = false;
                         foreach (var src in sourceCells)
                         {
-                            int dist = Mathf.Max(Mathf.Abs(cell.x - src.x), Mathf.Abs(cell.y - src.y));
+                            int dist = Mathf.Max(
+                                Mathf.Abs(cell.x - src.x),
+                                Mathf.Abs(cell.y - src.y));
                             if (dist <= layer.range) { inRange = true; break; }
                         }
-                        if (inRange)
+                        if (!inRange) continue;
+
+                        // LOS check: cell is clear when any hull source has an
+                        // unobstructed supercover Bresenham path to it.
+                        // Matches VisionResolver.IsVisibleFromAnySource.
+                        bool hasClears = false;
+                        foreach (var src in sourceCells)
                         {
-                            Gizmos.DrawWireCube(new Vector3(x * gridManager.CellSize, y * gridManager.CellSize, 0f), Vector3.one * gridManager.CellSize * 0.85f);
+                            if (!VisionResolver.TryGetFirstBlockingCell(
+                                    src, cell, gridManager, out _))
+                            {
+                                hasClears = true;
+                                break;
+                            }
                         }
+
+                        Gizmos.color = hasClears ? clearColor : blockedColor;
+                        Gizmos.DrawWireCube(
+                            new Vector3(x * gridManager.CellSize, y * gridManager.CellSize, 0f),
+                            Vector3.one * gridManager.CellSize * 0.85f);
                     }
                 }
             }
