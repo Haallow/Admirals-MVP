@@ -40,14 +40,14 @@
 | **Pointer/Drag Input** | IMPLEMENTED | Click-to-press, drag to grid cell, release holds provisional | — | All in `TestShipController` | Replace with production input |
 | **Ship Rotation** | IMPLEMENTED | `FootprintUtil.RotateOffsets` (0/90/180/270), validated via `CanPlaceShip` | — | `Q`/`E` in `TestShipController` | Replace with production input |
 | **Fog of War** | IMPLEMENTED | `FogManager`, `FogGrid`, `FogState`, `VisionResolver` | Player-facing fog UI | All visualization is Gizmo-only | Replace Gizmos with production fog UI |
-| **Passive Detection** | IMPLEMENTED | Halo and Cone passive layers, Chebyshev hull-cell range, `FogState.Identified`/`Marked`, rebuilt each Search | Terrain LOS (Phase 9A vision only; see note) | Halo Gizmo (`DrawDebugHalos`) uses anchor distance, not hull-cell distance — approximate | Correct halo Gizmo or replace with production art |
+| **Passive Detection** | IMPLEMENTED | Halo and Cone passive layers, Chebyshev hull-cell range, `FogState.Identified`/`Marked`, rebuilt each Search, supercover Bresenham LOS blocks Impassable terrain (Phase 9A) | — | Halo Gizmo (`DrawDebugHalos`) — now uses hull-cell range and full LOS check matching `VisionResolver` | Replace Gizmo with production art |
 | **Active Scanning** | IMPLEMENTED | Player activates with `S`, `Q`/`E` rotate, `Enter` confirms; `ActiveScanPreviewState` + cone Gizmo | Active scan does not iterate all living ships; only the currently selected ship activates | Cone Gizmo (`DrawDebugCones`); active scan via keyboard | Replace with production scan UI |
 | **Cone Scanning** | IMPLEMENTED | `VisionResolver.GetConeCells`, supercover LOS per cell, bow-derived forward | — | Cone Gizmo is visualization surface | Replace Gizmo with production scan overlay |
 | **Cone Pivot** | IMPLEMENTED | `ActiveScanPreviewState.Rotate`, `GridManager.RotateActiveScan` | — | `Q`/`E` keys in `TestShipController.HandleActiveScanInput` | Keep logic; replace key bindings |
 | **Vision LOS (Phase 9A)** | IMPLEMENTED | `VisionResolver.TryGetFirstBlockingCell`, supercover Bresenham; `VisionScanResult` captures blocked cells with blocker coords | — | Blocked-cell Gizmo coloring in `DrawDebugCones` | Keep LOS; replace blocked-cell visualization |
-| **Combat — Attack Validation** | IMPLEMENTED | Dead-check, charge-readiness, domain, nearest-cell range, fog gate, all in `CombatResolver.ResolveAttack` | Attack line-of-fire (Phase 9B) | `Debug.Log` on every rejection and outcome | Replace logs with production feedback |
+| **Combat — Attack Validation** | IMPLEMENTED | Dead-check, charge-readiness, domain, nearest-cell range, fog gate, all in `CombatResolver.ResolveAttack`; every rejection path logs a specific reason | — | `Debug.Log` on every rejection and outcome | Replace logs with production feedback |
 | **Combat — Attack Resolution** | IMPLEMENTED | d20 `RollWeapon`, tier damage, destroyed-ship cleanup | Armor, defense saves, ammo consumption, recharge, side effects | `Debug.Log` on outcome and destruction | Implement armor/defense later; remove logs |
-| **Combat — Line of Fire** | PLANNED / NOT IMPLEMENTED | — | Phase 9B not started; `CombatResolver` has no LOS check | — | Add to `CombatResolver` after Phase 9A is confirmed |
+| **Combat — Line of Fire** | IMPLEMENTED | `CombatResolver.HasClearLineOfFire` tests every in-range attacker×target cell pair via `VisionResolver.TryGetFirstBlockingCell`; fully-blocked attacks rejected before d20 roll; logs `BLOCKED_LINE_OF_FIRE` with attacker, weapon, target, pair, and first blocker | — | `Debug.Log` on block rejection | Replace log with production feedback |
 | **AI** | PARTIALLY IMPLEMENTED | Moves and attacks for `PlayerB.ships[0]` only; greedy weapon selection; calls `ResolveAttack` | Fog-aware target selection, multi-ship control, center-fallback movement, Search scanning | All of `AIController.cs` | Replace with proper fog-aware AI |
 | **Deployment** | IMPLEMENTED | `DeploymentService.DeployAll`, `CanPlaceShip` validation now present, hardcoded anchors | Player-controlled deployment phase | Hardcoded anchor values | Eventually support player deployment |
 | **Turn Management** | IMPLEMENTED | `TurnManager.AdvancePhase`, five phases, `PhaseChanged` event, player switching at End | — | `LogState` per phase advance | Replace console log with production HUD indicator |
@@ -57,7 +57,7 @@
 | **Match / Game-Over** | PARTIALLY IMPLEMENTED | Destroyed ships removed from grid and live fleet; no win check | Win-condition/game-over flow | Dead-ship log in `CombatResolver` | Add after core gameplay systems complete |
 | **Staging Actions** | PLANNED / NOT IMPLEMENTED | Phase enum includes `Staging`; `HandlePhaseChanged` processes it but comment notes nothing is built | Mines, planes, repair ship | — | Implement when Milestone 6+ scope is decided |
 
-> **Phase 9A note:** `VisionResolver.TryGetFirstBlockingCell` (supercover Bresenham LOS) is implemented. It is called during passive and active fog scans. `DrawDebugCones` in `GridView` also calls it for blocked-cell coloring. Phase 9A is functionally implemented but the halo Gizmo remains approximate.
+> **Phase 9A and 9B status:** Both are fully implemented. `VisionResolver.TryGetFirstBlockingCell` (supercover Bresenham LOS) gates passive and active fog scans (9A). `CombatResolver.HasClearLineOfFire` reuses the same traversal to gate attacks (9B). `DrawDebugHalos` in `GridView` now also uses hull-cell range and the same LOS check, matching the authoritative detection result.
 
 ---
 
@@ -132,8 +132,6 @@ All player movement input is in `TestShipController`, documented as throwaway. `
 **Missing functionality:**  
 - No player-facing fog UI (no UI at all).
 - Active scan only activates for the currently selected ship; the plan calls for all living ships to be able to scan.
-- `DrawDebugHalos` uses anchor-based distance, not hull-cell distance — it is an approximate visualization, not the authoritative detection result.
-- Phase 9B attack line-of-fire not implemented.
 
 **Partial functionality:**  
 `FogState.Identified` and `FogState.Marked` are both written; no consumer currently behaves differently based on the two states. The attack gate treats both as known.
@@ -142,28 +140,27 @@ All player movement input is in `TestShipController`, documented as throwaway. `
 All fog visualization (cones, halos) is Gizmo-based, scene-view only. `FogManager` emits verbose `Debug.Log` lines on every scan summary and every detected/blocked cell.
 
 **Future cleanup:**  
-Replace Gizmo visualization with production fog overlay/UI. Remove or suppress verbose scan logs once fog behavior is verified. Correct `DrawDebugHalos` to use hull-cell distance, or replace entirely.
+Replace Gizmo visualization with production fog overlay/UI. Remove or suppress verbose scan logs once fog behavior is verified.
 
 ---
 
 ### 2.5 Combat
 
 **Current implementation:**  
-`CombatResolver.ResolveAttack` performs the full authoritative attack chain: dead-check → charge-readiness → domain match → nearest-cell Chebyshev range (across all attacker/target cell pairs) → fog gate (`IsTargetKnown`) → d20 roll → damage → destroyed-ship cleanup. `CombatResolver.FindChargeState` is a public helper also used by `AIController`. `CombatResolver.IsTargetKnown` checks the attacker's `FogGrid` for any known target cell.
+`CombatResolver.ResolveAttack` performs the full authoritative attack chain: dead-check → charge-readiness → domain match → nearest-cell Chebyshev range (across all attacker/target cell pairs, collecting in-range pairs for step 5) → fog gate (`IsTargetKnown`) → terrain line-of-fire (`HasClearLineOfFire`) → d20 roll → damage → destroyed-ship cleanup. Every rejection path logs a specific reason. `CombatResolver.FindChargeState` is a public helper also used by `AIController`. `CombatResolver.IsTargetKnown` checks the attacker's `FogGrid` for any known target cell. `CombatResolver.HasClearLineOfFire` reuses `VisionResolver.TryGetFirstBlockingCell` to test each in-range cell pair; at least one clear pair allows the attack.
 
 **Missing functionality:**  
 - Armor is stored (`ShipInstance.armor`) but never subtracted from damage.
 - Defense profiles are defined but `ResolveAttack` does not invoke them.
-- Ammo/uses are never decremented from `ChargeState.remaining`. Every weapon fires as if unlimited, despite `ChargeState.IsReady` checking `remaining != 0`.
+- Ammo/uses are never decremented from `ChargeState.remaining`.
 - `ChargeState.turnsUntilRecharge` is initialized to 0 and never modified.
 - `DefenseProfile.sideEffectId` strings are stored but no code reads or executes them.
-- Phase 9B terrain line-of-fire check is not implemented in `CombatResolver`.
 
 **Partial functionality:**  
 `ChargeState.IsReady` checks `remaining != 0` and `turnsUntilRecharge == 0`, but since `remaining` is never decremented after a successful shot, weapons with finite ammo will always appear ready.
 
 **Future cleanup:**  
-Implement armor subtraction, defense resolution, ammo decrement, recharge tick, and sideEffect execution. Add Phase 9B line-of-fire check. Remove `Debug.Log` combat outcome messages once production feedback UI exists.
+Implement armor subtraction, defense resolution, ammo decrement, recharge tick, and sideEffect execution. Remove `Debug.Log` combat outcome messages once production feedback UI exists.
 
 ---
 
@@ -181,7 +178,7 @@ Implement armor subtraction, defense resolution, ammo decrement, recharge tick, 
 - Use provisional movement system.
 
 **Partial functionality:**  
-`AIController.CanFire` pre-checks charge, domain, and range before calling `ResolveAttack`. However its range check uses `attacker.anchor` rather than all attacker occupied cells — it diverges from `CombatResolver.ResolveAttack` which uses the minimum distance across all cell pairs. This means `CanFire` can report a shot as illegal even when `ResolveAttack` would accept it (or vice versa for very long ships with distant anchors).
+`AIController.CanFire` pre-checks charge, domain, range, and terrain line-of-fire before calling `ResolveAttack`. However its range check still uses `attacker.anchor` rather than all attacker occupied cells — it diverges from `CombatResolver.ResolveAttack` which uses the minimum distance across all cell pairs. The line-of-fire gate was added in Phase 9B and is correct; only the range pre-check is divergent.
 
 **Temporary/prototype functionality:**  
 The entire `AIController` class is documented as temporary prototype behavior. `[AI]` prefixed `Debug.Log` calls throughout.
@@ -367,7 +364,7 @@ Remove or replace with production UI once health bars, combat log, and notificat
 
 **File:** `Assets/Scripts/Grid/GridView.cs`  
 **Classification:** REPLACE WITH PRODUCTION ART  
-**Reason:** Same roadmap intent as cones. However, this Gizmo is currently **approximate** — it uses `ship.anchor` as the range origin, not all occupied hull cells. `VisionResolver` uses the nearest hull cell. The Gizmo therefore overestimates detection range for multi-cell ships near the anchor. This discrepancy should be corrected before the Gizmo becomes a production visualization, or the Gizmo should be replaced entirely.
+**Reason:** Per the roadmap comment, this is a planned visualization surface. It now uses hull-cell range (iterates all `ship.GetOccupiedCells()` as sources) and calls `VisionResolver.TryGetFirstBlockingCell` per source per candidate cell — matching `VisionResolver.IsVisibleFromAnySource` exactly. Clear cells draw cyan; terrain-blocked cells draw dark red. The Gizmo now matches the authoritative passive detection result.
 
 ---
 
@@ -383,7 +380,7 @@ No production art, sprites, prefabs, or materials exist in this repository. All 
 | `GridView.DrawTerrain` | Orange cubes (Costly), dark grey cubes (Impassable), grey wireframe (Normal) | Displays terrain type per tile | Final tile art per terrain type | Stage D — when terrain tile art is added |
 | `GridView.DrawStartingZones` | Blue/red translucent zone overlay | Marks player starting areas | Final zone indicator art (border or shading) or removed if deployment is player-controlled | Stage D |
 | `GridView.DrawDebugCones` | Yellow/red wireframe cells for active scan cone | Shows active scan preview including LOS-blocked cells | Production scan preview overlay with blocked-cell indicator | Stage D — when production scan UI is built; keep LOS coloring logic |
-| `GridView.DrawDebugHalos` | Cyan wireframe cells around each ship's passive halo range | Shows passive detection coverage | Production fog visualization (fog-of-war overlay, visibility shading) | Stage D — when production fog UI is built |
+| `GridView.DrawDebugHalos` | Cyan/dark-red wireframe cells per ship's passive halo range (cyan = clear, dark red = LOS-blocked) | Shows passive detection coverage with accurate hull-cell range and terrain LOS | Production fog visualization (fog-of-war overlay, visibility shading) | Stage D — when production fog UI is built |
 
 ---
 
@@ -467,7 +464,7 @@ No production art, sprites, prefabs, or materials exist in this repository. All 
 `CanFire` is a pre-flight weapon scoring check used by `DecideAttack` before calling `ResolveAttack`. It was written as a simplified mirror of the combat validation checks.
 
 **Divergence consequence:**  
-For a two-cell ship (Wolf: `(anchor, anchor+(1,0))`), the anchor-based range check may report a shot as out-of-range when `ResolveAttack`'s nearest-cell check would accept it (the second hull cell could be closer to the target). It could also incorrectly report a shot as in-range if the anchor is closer than the nearest hull cell to the target. In practice this is a small error for the Wolf's 1×2 footprint but would become more significant for larger ships.
+For a two-cell ship (Wolf: `(anchor, anchor+(1,0))`), the anchor-based range check may report a shot as out-of-range when `ResolveAttack`'s nearest-cell check would accept it. The line-of-fire pre-check (Phase 9B addition) is correct — it iterates all attacker cells when building in-range pairs for `HasClearLineOfFire`. Only the initial range gate in `CanFire` is divergent.
 
 **Should it be removed/replaced:**  
 Yes. `CanFire` should either: (a) be removed and the weapon-scoring loop in `DecideAttack` should query `CombatResolver` for range validity, or (b) be corrected to use the same min-occupied-cell logic. Option (a) is cleaner and eliminates the divergence entirely.
@@ -674,11 +671,10 @@ Remove `anchorAtTurnStart` snapshot logic from `TestShipController` after `MoveS
 
 ---
 
-### 10.3 `DrawDebugHalos` uses anchor-based range, not hull-cell range
+### 10.3 `DrawDebugHalos` — RESOLVED
 
-**Issue:** `GridView.DrawDebugHalos` calculates halo coverage using `ship.anchor` as the single source point. `VisionResolver.IsWithinHalo` uses all occupied cells of the source ship. For a two-cell Wolf, the Gizmo draws a halo that is slightly smaller/differently positioned than the actual detection range.  
-**Intended architecture:** `GridView` reads state but does not duplicate detection logic. The halo Gizmo should iterate `ship.GetOccupiedCells()` as sources, exactly as `VisionResolver` does.  
-**Smallest fix:** Replace `ship.anchor` with `ship.GetOccupiedCells()` in `DrawDebugHalos`.
+**Was:** `GridView.DrawDebugHalos` used `ship.anchor` as the single range origin, which made the Gizmo approximate for multi-cell ships and did not apply LOS.  
+**Fixed:** `DrawDebugHalos` now iterates `ship.GetOccupiedCells()` for both the range check and the LOS check, calling `VisionResolver.TryGetFirstBlockingCell` per source cell — matching `VisionResolver.IsVisibleFromAnySource` exactly. Clear cells draw cyan; terrain-blocked cells draw dark red. No architecture concern remains here.
 
 ---
 
@@ -772,7 +768,7 @@ Items that must be replaced by proper UI, art, or production systems rather than
 - [ ] Fix `AIController.actedThisPhase` timing (set flag before `DecideMove`/`DecideAttack`)
 - [ ] Remove stale comments describing old movement behavior in `TestShipController`
 - [ ] Remove stale `placeholder` comment on `ShipInstance.movementRange`
-- [ ] Correct `DrawDebugHalos` to use hull-cell distance instead of anchor-only distance
+- [x] Correct `DrawDebugHalos` to use hull-cell range and LOS — **DONE**
 - [ ] Remove `TestShipController.Update` phase/turn guard redundancy if any after production input exists
 - [ ] Remove or simplify `ProvisionalMovementState`'s `OriginalAnchor` duplication with `anchorAtTurnStart` after `MoveShip` is retired
 
@@ -978,14 +974,13 @@ The following systems are functionally present and verified in source:
 - **Ships and data model:** `ShipInstance` (all runtime state), `ShipData` builders for Wolf, Athena, and SwordFish. Weapon, defense, vision, and charge profiles all defined.
 - **Turns:** Five-phase cycle (`Move → Staging → Search → Battle → End`), `PhaseChanged` event, one-way decoupling between `TurnManager` and subscribers.
 - **Fog of War:** Passive per-player halo and cone detection with domain filtering, `onlyWhileSurfaced`, dead-ship exclusion, supercover Bresenham LOS (Phase 9A). Active cone scan is player-activated: `S` activates, `Q`/`E` rotate, `Enter` confirms. Active marks clear at End. `FogGrid` dual-layer (passive/active) state with no-downgrade upgrade logic.
-- **Combat:** `CombatResolver.ResolveAttack` with dead-check, charge-readiness, domain, nearest-cell range, fog gate, d20 resolution, and destroyed-ship cleanup.
+- **Combat:** `CombatResolver.ResolveAttack` with dead-check, charge-readiness, domain, nearest-cell range, fog gate, terrain line-of-fire (Phase 9B via `HasClearLineOfFire`), d20 resolution, and destroyed-ship cleanup. Every rejection logs its specific cause.
 - **Match foundation:** `MatchState`, `PlayerState`, `DeploymentService` (with `CanPlaceShip` validation).
 
 ### In Progress
 
 - **AI:** Moves and attacks for Player B's first ship only; ignores fog; uses legacy `MoveShip`. Planned fog-aware multi-ship behavior not yet built.
 - **Combat resolution:** Armor, defense saves, ammo consumption, recharge, and side effects are all data-defined but not executed.
-- **Phase 9B attack line-of-fire:** Design is complete (in `Plan.md`); `CombatResolver` has no LOS check yet.
 - **Active scan scope:** Player can activate a scan for the currently selected ship only; the plan calls for all living ships.
 
 ### Planned / Not Implemented
