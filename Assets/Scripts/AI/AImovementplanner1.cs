@@ -23,9 +23,50 @@ public static class AIMovementPlanner
     // part of this codebase area yet.
     private const float FleeHealthFraction = 0.3f;
 
-    public static Decision ChooseDestination(ShipInstance self, AITurnContext context, GridManager gridManager)
+    // Score weights for ScoreAttackFromTile, kept on a comparable 0-50
+    // scale so no single factor silently swamps the others.
+    //
+    // CHANGE (AI Optimization Recommendations, item 2.2): the original
+    // weights were ported from an FE-style prototype where unit health sat
+    // around 20-40 HP. This game's ships run 400-2000 HP, so raw-HP-delta
+    // terms like "Max(0, 20 - currentHealth)" were dead code almost all of
+    // the time, and the danger penalty (raw expected incoming damage,
+    // typically in the hundreds) completely swamped the 50-point kill
+    // bonus despite the "kill bonus dominates everything else" comment.
+    // Every term below is now expressed as a *fraction* of a ship's own
+    // max health instead of a raw HP number, so the relative weights below
+    // actually hold regardless of which ship class is involved.
+    private const float KillBonus = 50f;
+    private const float MaxDamageScore = 40f;
+    private const float TargetWeaknessWeight = 10f;
+    private const float DangerWeight = 35f;
+    private const float SelfRiskWeight = 15f;
+
+    // CHANGE (AI Optimization Recommendations, item 2.3): soft penalty
+    // applied when scoring a non-lethal hit on a target one of this ship's
+    // siblings has already lined up on this same Move phase, so the fleet
+    // spreads out across known enemies instead of every ship converging on
+    // the same one. Smaller than KillBonus, so a guaranteed kill always
+    // still wins regardless of who else is already engaging that target.
+    private const float AlreadyClaimedPenalty = 20f;
+
+    // claimedTargets is the set of enemies one of THIS side's other ships
+    // has already lined up on this same Move phase (see AiController). Pass
+    // null, or an empty set, to opt out of deconfliction entirely.
+    public static Decision ChooseDestination(
+        ShipInstance self, AITurnContext context, GridManager gridManager, HashSet<ShipInstance> claimedTargets)
     {
         List<Vector2Int> candidates = GetPlaceableReachableTiles(self, gridManager);
+
+        // Danger at a tile doesn't depend on which enemy we're currently
+        // scoring an attack against, so it's computed once per tile here and
+        // reused below -- instead of being recomputed from scratch for every
+        // (tile, enemy) combination, and then a third time in FindSafestTile.
+        Dictionary<Vector2Int, float> dangerByTile = new Dictionary<Vector2Int, float>();
+        foreach (Vector2Int tile in candidates)
+        {
+            dangerByTile[tile] = DangerAtTile(tile, self, context, gridManager);
+        }
 
         float bestScore = float.NegativeInfinity;
         Vector2Int bestTile = self.anchor;
@@ -42,7 +83,8 @@ public static class AIMovementPlanner
                     continue;
                 }
 
-                float score = ScoreAttackFromTile(self, enemy, tile, weapon, context, gridManager);
+                bool alreadyClaimed = claimedTargets != null && claimedTargets.Contains(enemy);
+                float score = ScoreAttackFromTile(self, enemy, dangerByTile[tile], weapon, alreadyClaimed);
                 if (score > bestScore)
                 {
                     bestScore = score;
@@ -60,7 +102,7 @@ public static class AIMovementPlanner
 
         if (isCriticallyLow && !bestIsLethal)
         {
-            Vector2Int safeTile = FindSafestTile(candidates, self, context, gridManager);
+            Vector2Int safeTile = FindSafestTile(candidates, self, context, gridManager, dangerByTile);
             return new Decision { destination = safeTile, likelyTarget = null, isFleeing = true };
         }
 
@@ -94,31 +136,73 @@ public static class AIMovementPlanner
         return placeable;
     }
 
+    // Takes the tile's danger as an already-computed value (see the cache
+    // in ChooseDestination) rather than a tile/context/gridManager triple,
+    // since danger no longer needs to be derived here.
     private static float ScoreAttackFromTile(
-        ShipInstance self, ShipInstance target, Vector2Int tile, WeaponProfile weapon,
-        AITurnContext context, GridManager gridManager)
+        ShipInstance self, ShipInstance target, float danger, WeaponProfile weapon, bool alreadyClaimed)
     {
         float expectedDamage = AIScoring.ExpectedValue(weapon);
         float score = 0f;
 
         // Kill bonus dominates everything else.
-        if (expectedDamage >= target.currentHealth)
+        bool isLethal = expectedDamage >= target.currentHealth;
+        if (isLethal)
         {
-            score += 50f;
+            score += KillBonus;
         }
         else
         {
-            score += Mathf.Min(expectedDamage * 0.4f, 40f);
+            // How big a bite this hit takes out of the target's CURRENT
+            // health, 0..1. Replaces the old flat "expectedDamage * 0.4,
+            // capped at 40" rule, which saturated for nearly every weapon
+            // in this game (most clear the old ~100-damage cap easily) and
+            // so barely told a strong weapon apart from a mediocre one.
+            float damageFraction = target.currentHealth > 0
+                ? Mathf.Clamp01(expectedDamage / target.currentHealth)
+                : 0f;
+            score += damageFraction * MaxDamageScore;
+
+            // A guaranteed kill (the branch above) always overrides this --
+            // piling on is still correct when it actually finishes the
+            // target off. This only discourages a merely-okay non-lethal
+            // hit on a target a sibling ship is already engaging, when a
+            // comparable option exists against an unpressured known enemy.
+            if (alreadyClaimed)
+            {
+                score -= AlreadyClaimedPenalty;
+            }
         }
 
-        // Prefer finishing off targets that are already low.
-        score += Mathf.Max(0, 20 - target.currentHealth) * 0.5f;
+        // Secondary, smaller nudge toward targets that are already
+        // weakened overall (independent of what THIS weapon would do),
+        // based on how much of the target's max health is already gone.
+        // Replaces "Max(0, 20 - currentHealth)", which assumed ~20 HP
+        // ships and was effectively dead code at this game's 400-2000 HP
+        // scale.
+        float targetWeaknessFraction = target.maxHealth > 0
+            ? 1f - Mathf.Clamp01((float)target.currentHealth / target.maxHealth)
+            : 0f;
+        score += targetWeaknessFraction * TargetWeaknessWeight;
 
-        // Penalty for how exposed this tile is to known enemies after moving there.
-        score -= DangerAtTile(tile, self, context, gridManager) * 0.5f;
+        // Penalty for how exposed this tile is to known enemies after
+        // moving there, expressed as a fraction of THIS ship's own max
+        // health rather than a raw expected-damage number. The old raw
+        // version (typically in the hundreds) silently dwarfed the kill
+        // bonus and damage terms above, so tile choice was effectively
+        // "avoid danger" almost to the exclusion of everything else.
+        float dangerFraction = self.maxHealth > 0
+            ? Mathf.Clamp01(danger / self.maxHealth)
+            : 0f;
+        score -= dangerFraction * DangerWeight;
 
-        // Risk aversion when self is already low HP.
-        score -= Mathf.Max(0, 20 - self.currentHealth) * 0.3f;
+        // Extra caution once self is already hurt, based on health
+        // fraction instead of a raw "20 - currentHealth" delta that never
+        // fired at this game's health scale.
+        float selfHealthFraction = self.maxHealth > 0
+            ? Mathf.Clamp01((float)self.currentHealth / self.maxHealth)
+            : 1f;
+        score -= (1f - selfHealthFraction) * SelfRiskWeight;
 
         return score;
     }
@@ -128,6 +212,10 @@ public static class AIMovementPlanner
     // from a hidden ship can't be evaluated without cheating the AI's fog.
     // No counter-fire modeling exists in CombatResolver, so this is "next
     // full enemy turn" danger, not an immediate counter-attack.
+    //
+    // Callers should prefer the dangerByTile cache built in
+    // ChooseDestination over calling this directly, so the same tile's
+    // danger is never computed more than once per turn.
     private static float DangerAtTile(Vector2Int tile, ShipInstance self, AITurnContext context, GridManager gridManager)
     {
         float danger = 0f;
@@ -143,16 +231,18 @@ public static class AIMovementPlanner
     }
 
     // Lowest danger wins first; distance from the nearest known enemy is
-    // only a small tie-breaker on top.
+    // only a small tie-breaker on top. Takes the precomputed per-tile
+    // danger cache instead of recalculating it a third time.
     private static Vector2Int FindSafestTile(
-        List<Vector2Int> candidates, ShipInstance self, AITurnContext context, GridManager gridManager)
+        List<Vector2Int> candidates, ShipInstance self, AITurnContext context, GridManager gridManager,
+        Dictionary<Vector2Int, float> dangerByTile)
     {
         Vector2Int best = self.anchor;
         float bestSafety = float.NegativeInfinity;
 
         foreach (Vector2Int tile in candidates)
         {
-            float danger = DangerAtTile(tile, self, context, gridManager);
+            float danger = dangerByTile[tile];
             float nearestEnemyDist = NearestKnownEnemyDistance(tile, context, gridManager);
             float safety = -danger + nearestEnemyDist * 0.01f;
 

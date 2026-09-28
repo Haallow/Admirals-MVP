@@ -207,7 +207,12 @@ public class GridManager : MonoBehaviour
         provisionalMoves.Clear();
     }
 
-    public bool ActivateActiveScan(ShipInstance ship)
+    // preferredForward is optional: when supplied (currently only by
+    // AIActiveScanPlanner, after scoring the four cardinal facings against
+    // AIEnemyMemory and fog coverage), the cone uses that direction instead
+    // of the hull's own default facing. TestShipController's manual scan
+    // omits it and keeps the original hull-facing behavior unchanged.
+    public bool ActivateActiveScan(ShipInstance ship, Vector2Int? preferredForward = null)
     {
         if (ship == null || ship.owner != turnManager.CurrentPlayer)
         {
@@ -229,7 +234,9 @@ public class GridManager : MonoBehaviour
             return false;
         }
 
-        VisionResolver.GetBowAndFacing(ship, out Vector2Int bow, out Vector2Int forward);
+        VisionResolver.GetBowAndFacing(ship, out Vector2Int bow, out Vector2Int defaultForward);
+        Vector2Int forward = preferredForward ?? defaultForward;
+
         activeScanPreview = new ActiveScanPreviewState(ship, layer, bow, forward);
         return true;
     }

@@ -11,9 +11,80 @@ using UnityEngine;
 // rules never drift between a real attack and a "what if" check.
 public static class AIAttackPlanner
 {
+    // Kill bonus dominates every other weapon-value comparison in
+    // TryChooseTarget, so a guaranteed kill always wins over a merely
+    // strong non-lethal option.
+    private const float KillBonus = 10000f;
+
+    // CHANGE (AI Optimization Recommendations, item 2.3): soft penalty
+    // applied when a non-lethal shot would land on a target one of this
+    // ship's siblings has already fired on this Battle phase, so the fleet
+    // spreads its fire instead of every ship independently piling onto the
+    // same easiest target. Small enough relative to typical expected-damage
+    // values (roughly 100-1000 in this game) that it only tips the balance
+    // between comparable options -- it never overrides the kill bonus above,
+    // and it never leaves a ship with literally nothing to shoot at.
+    private const float AlreadyClaimedPenalty = 300f;
+
     public static WeaponProfile ChooseWeapon(ShipInstance attacker, ShipInstance target, GridManager gridManager)
     {
         return ChooseBestWeapon(attacker, attacker.GetOccupiedCells(), target.GetOccupiedCells(), target.currentDomain, gridManager);
+    }
+
+    // Fog-aware, multi-enemy target selection for the Battle phase. Only
+    // considers enemies the attacker's own fog currently knows about --
+    // mirrors how AIMovementPlanner already reasons over context.KnownEnemies.
+    // A guaranteed kill always wins over a higher-expected-value non-kill.
+    //
+    // claimedTargets is the set of enemies one of THIS side's other ships
+    // has already fired on this same Battle phase (see AiController). Pass
+    // null, or an empty set, to opt out of deconfliction entirely.
+    public static bool TryChooseTarget(
+        ShipInstance attacker,
+        List<ShipInstance> knownEnemies,
+        GridManager gridManager,
+        HashSet<ShipInstance> claimedTargets,
+        out ShipInstance target,
+        out WeaponProfile weapon)
+    {
+        target = null;
+        weapon = null;
+        float bestScore = float.NegativeInfinity;
+
+        foreach (ShipInstance enemy in knownEnemies)
+        {
+            if (enemy.currentHealth <= 0)
+            {
+                continue; // may have been destroyed by an earlier ship this same phase
+            }
+
+            WeaponProfile candidate = ChooseWeapon(attacker, enemy, gridManager);
+            if (candidate == null)
+            {
+                continue;
+            }
+
+            float score = AIScoring.ExpectedValue(candidate);
+
+            bool isLethal = score >= enemy.currentHealth;
+            if (isLethal)
+            {
+                score += KillBonus;
+            }
+            else if (claimedTargets != null && claimedTargets.Contains(enemy))
+            {
+                score -= AlreadyClaimedPenalty;
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                target = enemy;
+                weapon = candidate;
+            }
+        }
+
+        return target != null && weapon != null;
     }
 
     // "If attacker moved to candidateAnchor, could it then hit target?"
@@ -61,8 +132,20 @@ public static class AIAttackPlanner
     }
 
     // Mirrors CombatResolver.ResolveAttack's checks (charge, domain,
-    // nearest-cell-to-nearest-cell range), without side effects, so it's
-    // safe to call for hypothetical positions too.
+    // nearest-cell-to-nearest-cell range, and terrain line-of-fire), without
+    // side effects, so it's safe to call for hypothetical positions too.
+    //
+    // CHANGE (AI Optimization Recommendations, item 2.1): this used to stop
+    // at a range check and never verified line of fire, so the AI could
+    // believe a shot was legal when CombatResolver.ResolveAttack would
+    // actually reject it for being terrain-blocked -- wasting a move or an
+    // attack action with no fallback. It now walks every in-range
+    // attacker/target cell pair, same as CombatResolver.HasClearLineOfFire,
+    // and only accepts the weapon if at least one pair has a clear
+    // supercover Bresenham line (VisionResolver.TryGetFirstBlockingCell).
+    // Because both AIMovementPlanner (destination scoring + danger
+    // calculation) and AiController's battle-phase targeting all route
+    // through CanFire, this one fix corrects all three call sites at once.
     private static bool CanFire(
         ShipInstance attacker, List<Vector2Int> attackerCells, List<Vector2Int> targetCells,
         DomainType targetDomain, WeaponProfile weapon, GridManager gridManager)
@@ -79,15 +162,28 @@ public static class AIAttackPlanner
             return false;
         }
 
-        int minDistance = int.MaxValue;
+        // Walk every attacker-cell/target-cell pair within weapon range and
+        // accept the first one with a clear line of fire. This matches
+        // CombatResolver.ResolveAttack's own range + line-of-fire gating,
+        // instead of only checking the single nearest pair's distance.
         foreach (var attackerCell in attackerCells)
         {
             foreach (var targetCell in targetCells)
             {
-                minDistance = Mathf.Min(minDistance, gridManager.DistanceBetween(attackerCell, targetCell));
+                if (gridManager.DistanceBetween(attackerCell, targetCell) > weapon.weaponRange)
+                {
+                    continue;
+                }
+
+                if (!VisionResolver.TryGetFirstBlockingCell(attackerCell, targetCell, gridManager, out _))
+                {
+                    return true; // in range AND a clear shot -- weapon can fire
+                }
             }
         }
 
-        return weapon.weaponRange >= minDistance;
+        // Either no cell pair was in range, or every in-range pair was
+        // blocked by Impassable terrain.
+        return false;
     }
 }
