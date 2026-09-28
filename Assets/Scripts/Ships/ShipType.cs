@@ -3,5 +3,7 @@ public enum ShipType
 {
     WolfClass,
     AthenaClass,
-    SwordFishClass
+    SwordFishClass,
+    CarrierClass,
+    CruiserClass
 }

@@ -15,6 +15,12 @@ public static class ShipFactory
             case ShipType.SwordFishClass:
                 ShipData.BuildSwordFishClass(ship);
                 break;
+            case ShipType.CarrierClass:
+                ShipData.BuildCarrierClass(ship);
+                break;
+            case ShipType.CruiserClass:
+                ShipData.BuildCruiserClass(ship);
+                break;
         }
         ship.shipType = type;
         return ship;

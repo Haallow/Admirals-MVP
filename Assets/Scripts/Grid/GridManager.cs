@@ -50,7 +50,7 @@ public class GridManager : MonoBehaviour
 
     private void Start()
     {
-        var playerA = new PlayerState(PlayerId.PlayerA, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
+        var playerA = new PlayerState(PlayerId.PlayerA, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass, ShipType.SwordFishClass, ShipType.CarrierClass, ShipType.CruiserClass});
         var playerB = new PlayerState(PlayerId.PlayerB, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
         match = new MatchState(playerA, playerB);
         DeploymentService.DeployAll(match, this);
@@ -494,15 +494,4 @@ public class GridManager : MonoBehaviour
         // Staging's actual actions (mines, planes, repair) aren't built yet.
     }
 
-    [ContextMenu("Debug Recompute Fog")]
-    private void DebugRecomputeFog()
-    {
-        Fog.RecomputeAllPassive(match);
-        foreach (var ship in match.AllShips())
-        {
-            PlayerId viewer = ship.owner == PlayerId.PlayerA ? PlayerId.PlayerB : PlayerId.PlayerA;
-            foreach (var cell in ship.GetOccupiedCells())
-                Debug.Log($"{viewer} sees {ship.owner} ship at {cell}: {Fog.GetFogGrid(viewer).GetState(cell)}");
-        }
-    }
 }

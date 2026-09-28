@@ -83,8 +83,18 @@ public class CombatResolver
         }
 
         RollTier result = RollWeapon(weapon);
+
+        // Deduct one use. -1 is the infinite sentinel and is never decremented.
+        if (weaponCharge.remaining != -1)
+        {
+            weaponCharge.remaining--;
+        }
+
         target.currentHealth -= result.damage;
-        Debug.Log($"{attacker.owner} fires {weapon.id} at {target.owner}: {result.outcomeLabel}" + (result.damage > 0 ? $" ({result.damage} dmg)" : ""));
+        string ammoStr = weaponCharge.remaining == -1 ? "∞" : weaponCharge.remaining.ToString();
+        Debug.Log($"{attacker.owner} fires {weapon.id} at {target.owner}: {result.outcomeLabel}" +
+                  (result.damage > 0 ? $" ({result.damage} dmg)" : "") +
+                  $" | {weapon.id} ammo remaining: {ammoStr}");
 
         if (target.currentHealth <= 0)
         {
