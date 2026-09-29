@@ -169,23 +169,24 @@ public class GridView : MonoBehaviour
     {
         // TEMPORARY: Cone overlay is visualization only; LOS classification uses
         // the same VisionResolver helper as the authoritative scan.
-        if (gridManager.ActiveScanPreview == null) return;
-
-        ActiveScanPreviewState preview = gridManager.ActiveScanPreview;
-        foreach (var c in preview.GetConeCells())
+        // Iterates all per-ship previews — multiple ships can have simultaneous previews.
+        foreach (ActiveScanPreviewState preview in gridManager.ActiveScanPreviews)
         {
-            bool blocked = VisionResolver.TryGetFirstBlockingCell(
-                preview.Bow,
-                c,
-                gridManager,
-                out _);
-            Gizmos.color = blocked
-                ? new Color(1f, 0.15f, 0.05f, 0.6f)
-                : new Color(1f, 0.9f, 0f, 0.6f);
+            foreach (var c in preview.GetConeCells())
+            {
+                bool blocked = VisionResolver.TryGetFirstBlockingCell(
+                    preview.Bow,
+                    c,
+                    gridManager,
+                    out _);
+                Gizmos.color = blocked
+                    ? new Color(1f, 0.15f, 0.05f, 0.6f)
+                    : new Color(1f, 0.9f, 0f, 0.6f);
 
-            Gizmos.DrawWireCube(
-                new Vector3(c.x * gridManager.CellSize, c.y * gridManager.CellSize, 0f),
-                Vector3.one * gridManager.CellSize * 0.9f);
+                Gizmos.DrawWireCube(
+                    new Vector3(c.x * gridManager.CellSize, c.y * gridManager.CellSize, 0f),
+                    Vector3.one * gridManager.CellSize * 0.9f);
+            }
         }
     }
 

@@ -21,8 +21,9 @@ Known gaps still present in the prototype:
 - `AIController` still targets Player A's first ship using global knowledge.
 - The AI still only controls Player B's first ship.
 - Active scanning is player-activated during Search: `S` opens the selected
-  ship's non-passive cone preview, `Q`/`E` rotate it, `Enter` confirms it, and
-  `Escape`/`C` cancels it. Passive vision remains automatic.
+  ship's non-passive cone preview, `Q`/`E` rotate it, and `Escape`/`C` cancels
+  it. Confirmation is handled by the UI layer, not a substitute keyboard
+  shortcut. Passive vision remains automatic.
 - Fog state is runtime-only; there is no player-facing UI.
 - Armor, defense rolls, ammo consumption, recharge, and defense side effects are not implemented.
 - There is no win-condition/game-over flow.

@@ -41,7 +41,7 @@
 | **Ship Rotation** | IMPLEMENTED | `FootprintUtil.RotateOffsets` (0/90/180/270), validated via `CanPlaceShip` | — | `Q`/`E` in `TestShipController` | Replace with production input |
 | **Fog of War** | IMPLEMENTED | `FogManager`, `FogGrid`, `FogState`, `VisionResolver` | Player-facing fog UI | All visualization is Gizmo-only | Replace Gizmos with production fog UI |
 | **Passive Detection** | IMPLEMENTED | Halo and Cone passive layers, Chebyshev hull-cell range, `FogState.Identified`/`Marked`, rebuilt each Search, supercover Bresenham LOS blocks Impassable terrain (Phase 9A) | — | Halo Gizmo (`DrawDebugHalos`) — now uses hull-cell range and full LOS check matching `VisionResolver` | Replace Gizmo with production art |
-| **Active Scanning** | IMPLEMENTED | Player activates with `S`, `Q`/`E` rotate, `Enter` confirms; `ActiveScanPreviewState` + cone Gizmo | Active scan does not iterate all living ships; only the currently selected ship activates | Cone Gizmo (`DrawDebugCones`); active scan via keyboard | Replace with production scan UI |
+| **Active Scanning** | IMPLEMENTED | Player activates with `S`, `Q`/`E` rotate; confirmation handled by UI; `ActiveScanPreviewState` + cone Gizmo | Active scan does not iterate all living ships; only the currently selected ship activates | Cone Gizmo (`DrawDebugCones`); active scan via keyboard | Replace with production scan UI |
 | **Cone Scanning** | IMPLEMENTED | `VisionResolver.GetConeCells`, supercover LOS per cell, bow-derived forward | — | Cone Gizmo is visualization surface | Replace Gizmo with production scan overlay |
 | **Cone Pivot** | IMPLEMENTED | `ActiveScanPreviewState.Rotate`, `GridManager.RotateActiveScan` | — | `Q`/`E` keys in `TestShipController.HandleActiveScanInput` | Keep logic; replace key bindings |
 | **Vision LOS (Phase 9A)** | IMPLEMENTED | `VisionResolver.TryGetFirstBlockingCell`, supercover Bresenham; `VisionScanResult` captures blocked cells with blocker coords | — | Blocked-cell Gizmo coloring in `DrawDebugCones` | Keep LOS; replace blocked-cell visualization |
@@ -127,7 +127,7 @@ All player movement input is in `TestShipController`, documented as throwaway. `
 ### 2.4 Fog of War
 
 **Current implementation:**  
-`FogManager` owns two `FogGrid` instances (one per player). Passive detection is rebuilt from scratch each `Search` phase via `RecomputeAllPassive`. Active scans are player-triggered: the human player presses `S` to activate, `Q`/`E` to rotate, `Enter` to confirm. `VisionResolver` is stateless and handles Halo geometry, Cone geometry, domain filtering, `onlyWhileSurfaced`, dead-ship filtering, and supercover Bresenham LOS. `VisionScanResult` carries detected and blocked cells. Active marks clear at `End`. `FogGrid.GetState` returns the stronger of passive and active layers.
+`FogManager` owns two `FogGrid` instances (one per player). Passive detection is rebuilt from scratch each `Search` phase via `RecomputeAllPassive`. Active scans are player-triggered: the human player presses `S` to activate, `Q`/`E` to rotate; confirmation is handled by the UI layer. `VisionResolver` is stateless and handles Halo geometry, Cone geometry, domain filtering, `onlyWhileSurfaced`, dead-ship filtering, and supercover Bresenham LOS. `VisionScanResult` carries detected and blocked cells. Active marks clear at `End`. `FogGrid.GetState` returns the stronger of passive and active layers.
 
 **Missing functionality:**  
 - No player-facing fog UI (no UI at all).
@@ -973,7 +973,7 @@ The following systems are functionally present and verified in source:
 - **Movement:** Dijkstra 8-direction pathfinding (`GridPathfinder`), provisional movement with keyboard and pointer/drag input, multi-ship atomic commit, Escape/C cancel. Space advances phase only when all previews are valid.
 - **Ships and data model:** `ShipInstance` (all runtime state), `ShipData` builders for Wolf, Athena, and SwordFish. Weapon, defense, vision, and charge profiles all defined.
 - **Turns:** Five-phase cycle (`Move → Staging → Search → Battle → End`), `PhaseChanged` event, one-way decoupling between `TurnManager` and subscribers.
-- **Fog of War:** Passive per-player halo and cone detection with domain filtering, `onlyWhileSurfaced`, dead-ship exclusion, supercover Bresenham LOS (Phase 9A). Active cone scan is player-activated: `S` activates, `Q`/`E` rotate, `Enter` confirms. Active marks clear at End. `FogGrid` dual-layer (passive/active) state with no-downgrade upgrade logic.
+- **Fog of War:** Passive per-player halo and cone detection with domain filtering, `onlyWhileSurfaced`, dead-ship exclusion, supercover Bresenham LOS (Phase 9A). Active cone scan is player-activated: `S` activates, `Q`/`E` rotate; confirmation handled by UI. Active marks clear at End. `FogGrid` dual-layer (passive/active) state with no-downgrade upgrade logic.
 - **Combat:** `CombatResolver.ResolveAttack` with dead-check, charge-readiness, domain, nearest-cell range, fog gate, terrain line-of-fire (Phase 9B via `HasClearLineOfFire`), d20 resolution, and destroyed-ship cleanup. Every rejection logs its specific cause.
 - **Match foundation:** `MatchState`, `PlayerState`, `DeploymentService` (with `CanPlaceShip` validation).
 

@@ -17,7 +17,11 @@ public class GridManager : MonoBehaviour
     private Dictionary<Vector2Int, Tile> tiles = new Dictionary<Vector2Int, Tile>();
     private Dictionary<ShipInstance, ProvisionalMovementState> provisionalMoves =
         new Dictionary<ShipInstance, ProvisionalMovementState>();
-    private ActiveScanPreviewState activeScanPreview;
+    // Per-ship active scan previews. Follows the same pattern as provisionalMoves.
+    private Dictionary<ShipInstance, ActiveScanPreviewState> activeScanPreviews =
+        new Dictionary<ShipInstance, ActiveScanPreviewState>();
+    // Tracks which ships have already confirmed a scan this Search phase.
+    private HashSet<ShipInstance> shipsScannedThisPhase = new HashSet<ShipInstance>();
 
     public float CellSize => cellSize;
 
@@ -31,7 +35,8 @@ public class GridManager : MonoBehaviour
 
     public FogManager Fog { get; private set; }
     public CombatResolver Combat { get; private set; }
-    public ActiveScanPreviewState ActiveScanPreview => activeScanPreview;
+    // Read-only access to all active scan previews for GridView rendering.
+    public IEnumerable<ActiveScanPreviewState> ActiveScanPreviews => activeScanPreviews.Values;
 
     private void Awake()
     {
@@ -54,6 +59,10 @@ public class GridManager : MonoBehaviour
         var playerB = new PlayerState(PlayerId.PlayerB, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
         match = new MatchState(playerA, playerB);
         DeploymentService.DeployAll(match, this);
+
+        // Ensure scan state is clean regardless of initial Inspector phase value.
+        activeScanPreviews.Clear();
+        shipsScannedThisPhase.Clear();
 
         if (turnManager != null)
         {
@@ -214,6 +223,19 @@ public class GridManager : MonoBehaviour
             return false;
         }
 
+        // Gate to Search phase only.
+        if (turnManager.CurrentPhase != Phase.Search)
+        {
+            return false;
+        }
+
+        // One confirmed scan per ship per Search phase.
+        if (shipsScannedThisPhase.Contains(ship))
+        {
+            Debug.Log($"[Scan] {ship.shipType} has already scanned this Search phase.");
+            return false;
+        }
+
         VisionLayer layer = null;
         foreach (VisionLayer candidate in ship.visionLayers)
         {
@@ -230,41 +252,62 @@ public class GridManager : MonoBehaviour
         }
 
         VisionResolver.GetBowAndFacing(ship, out Vector2Int bow, out Vector2Int forward);
-        activeScanPreview = new ActiveScanPreviewState(ship, layer, bow, forward);
+        activeScanPreviews[ship] = new ActiveScanPreviewState(ship, layer, bow, forward);
         return true;
     }
 
-    public bool RotateActiveScan(int quarterTurns)
+    public bool RotateActiveScan(ShipInstance ship, int quarterTurns)
     {
-        if (activeScanPreview == null || quarterTurns == 0)
+        if (ship == null || quarterTurns == 0)
         {
             return false;
         }
 
-        activeScanPreview.Rotate(quarterTurns);
+        if (!activeScanPreviews.TryGetValue(ship, out ActiveScanPreviewState preview))
+        {
+            return false;
+        }
+
+        preview.Rotate(quarterTurns);
         return true;
     }
 
-    public bool ConfirmActiveScan()
+    public bool ConfirmActiveScan(ShipInstance ship)
     {
-        if (activeScanPreview == null || match == null)
+        if (ship == null || match == null)
+        {
+            return false;
+        }
+
+        // Gate to Search phase only.
+        if (turnManager.CurrentPhase != Phase.Search)
+        {
+            return false;
+        }
+
+        if (!activeScanPreviews.TryGetValue(ship, out ActiveScanPreviewState preview))
         {
             return false;
         }
 
         Fog.RunActiveSearch(
-            activeScanPreview.Ship,
-            activeScanPreview.Layer,
-            activeScanPreview.Bow,
-            activeScanPreview.Forward,
+            preview.Ship,
+            preview.Layer,
+            preview.Bow,
+            preview.Forward,
             match);
-        activeScanPreview = null;
+
+        activeScanPreviews.Remove(ship);
+        shipsScannedThisPhase.Add(ship);
         return true;
     }
 
-    public void CancelActiveScan()
+    public void CancelActiveScan(ShipInstance ship)
     {
-        activeScanPreview = null;
+        if (ship != null)
+        {
+            activeScanPreviews.Remove(ship);
+        }
     }
 
     public bool ConfirmProvisionalMovement()
@@ -484,12 +527,16 @@ public class GridManager : MonoBehaviour
         {
             // Passive vision remains automatic; active scans require player activation.
             Fog.RecomputeAllPassive(match);
-            activeScanPreview = null;
+            // Clear both the preview dictionary and the per-phase scan limit.
+            activeScanPreviews.Clear();
+            shipsScannedThisPhase.Clear();
         }
         else if (newPhase == Phase.End)
         {
             Fog.ClearAllActiveMarks();
-            activeScanPreview = null;
+            // Clear both so abandoned previews and the scan limit don't persist.
+            activeScanPreviews.Clear();
+            shipsScannedThisPhase.Clear();
         }
         // Staging's actual actions (mines, planes, repair) aren't built yet.
     }

@@ -32,12 +32,6 @@ public class TestShipController : MonoBehaviour
                 return;
             }
 
-            if (turnManager.CurrentPhase == Phase.Search &&
-                gridManager.ActiveScanPreview != null)
-            {
-                gridManager.ConfirmActiveScan();
-            }
-
             turnManager.AdvancePhase();
         }
 
@@ -246,29 +240,31 @@ public class TestShipController : MonoBehaviour
             }
             else
             {
-                Debug.Log("Selected ship has no non-passive cone scan.");
+                Debug.Log("Active scan activation rejected (wrong phase, already scanned, or no cone layer).");
             }
+            // Do not process any other scan input on the same frame as activation.
+            return;
         }
 
         if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.C))
         {
-            gridManager.CancelActiveScan();
+            gridManager.CancelActiveScan(ship);
             Debug.Log("Active scan preview cancelled.");
             return;
         }
 
         if (Input.GetKeyDown(KeyCode.Q))
         {
-            gridManager.RotateActiveScan(-1);
+            gridManager.RotateActiveScan(ship, -1);
         }
         else if (Input.GetKeyDown(KeyCode.E))
         {
-            gridManager.RotateActiveScan(1);
+            gridManager.RotateActiveScan(ship, 1);
         }
 
         if (Input.GetKeyDown(KeyCode.Return))
         {
-            if (gridManager.ConfirmActiveScan())
+            if (gridManager.ConfirmActiveScan(ship))
             {
                 Debug.Log("Active scan confirmed.");
             }
