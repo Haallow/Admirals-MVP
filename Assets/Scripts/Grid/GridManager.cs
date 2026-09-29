@@ -631,6 +631,20 @@ public class GridManager : MonoBehaviour
             // Clear both so abandoned previews and the scan limit don't persist.
             activeScanPreviews.Clear();
             shipsScannedThisPhase.Clear();
+
+            // Tick recharge for the acting player's living ships only.
+            // Opposing ships tick at the end of their own player's turn.
+            if (match != null)
+            {
+                List<ShipInstance> actingShips = turnManager.CurrentPlayer == PlayerId.PlayerA
+                    ? match.playerA.ships
+                    : match.playerB.ships;
+
+                foreach (ShipInstance ship in actingShips)
+                {
+                    ship.TickRecharge();
+                }
+            }
         }
         // Staging's actual actions (mines, planes, repair) aren't built yet.
     }

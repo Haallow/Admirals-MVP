@@ -73,6 +73,29 @@ public class ShipInstance
         }
     }
 
+    // Decrements turnsUntilRecharge by 1 for every weapon and defense charge,
+    // never going below 0. Called once at Phase.End for the acting player's ships.
+    // Has no effect on any slot that is already at 0 (the common case today,
+    // since nothing currently sets turnsUntilRecharge above 0).
+    public void TickRecharge()
+    {
+        foreach (ChargeState charge in weaponCharges)
+        {
+            if (charge.turnsUntilRecharge > 0)
+            {
+                charge.turnsUntilRecharge--;
+            }
+        }
+
+        foreach (ChargeState charge in defenseCharges)
+        {
+            if (charge.turnsUntilRecharge > 0)
+            {
+                charge.turnsUntilRecharge--;
+            }
+        }
+    }
+
     // --- Debug logging ---
 
     // Prints the full stat block to Console so each milestone can be verified visually.

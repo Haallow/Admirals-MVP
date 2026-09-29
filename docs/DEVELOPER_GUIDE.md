@@ -538,8 +538,16 @@ damage. Defense tables use the label and leave damage at zero.
 Mutable runtime uses for one weapon or defense slot. `remaining == -1` means
 infinite. `IsReady` is true when recharge time is zero and remaining is not
 zero. `remaining` is decremented by `CombatResolver.ResolveAttack` after each
-successful shot; the `-1` sentinel is never decremented. Recharge logic is not
-yet implemented.
+successful shot; the `-1` sentinel is never decremented.
+
+The recharge tick infrastructure is implemented: `ShipInstance.TickRecharge()`
+decrements `turnsUntilRecharge` by 1 (never below 0) for every weapon and
+defense charge, and is called at `Phase.End` for the acting player's living
+ships via `GridManager.HandlePhaseChanged`. However, nothing currently sets
+`turnsUntilRecharge` above `0` for any weapon or defense — the tick is
+presently inert and has no observable effect on gameplay. It will activate
+automatically when mines, planes, or other future systems set a recharge value
+on spend.
 ---
 
 ### `Assets/Scripts/AI/`
