@@ -38,7 +38,9 @@ The remaining known gaps are:
   it. Confirmation is handled by the UI layer, not a substitute keyboard
   shortcut. Passive vision remains automatic.
 - Fog state is internal runtime state; there is no player-facing visibility UI.
-- Armor, defense rolls, recharge, and defense side effects are not implemented.
+- Defense rolls, recharge, and defense side effects are not implemented. Armor
+  reduction is implemented: `CombatResolver.ApplyArmor` applies
+  `round(rawDamage * (1 - armor * 0.0015))` after each successful d20 roll.
 - There is no win-condition/game-over flow.
 - Verification Gizmos remain, but temporary fog logging and cone-count debug
   commands have been removed.
@@ -538,7 +540,6 @@ infinite. `IsReady` is true when recharge time is zero and remaining is not
 zero. `remaining` is decremented by `CombatResolver.ResolveAttack` after each
 successful shot; the `-1` sentinel is never decremented. Recharge logic is not
 yet implemented.
-
 ---
 
 ### `Assets/Scripts/AI/`
@@ -843,8 +844,12 @@ The current validation order is:
    `Impassable` terrain blocks. Logs `BLOCKED_LINE_OF_FIRE` with attacker,
    weapon, target, pair, and first blocker when every pair is blocked.
 8. Roll one d20 with `RollWeapon`.
-9. Subtract the selected tier's damage from target health.
-10. If health reaches zero, remove the target from grid occupancy and its
+9. Apply armor reduction via `ApplyArmor(result.damage, target.armor)`:
+   `effectiveDamage = round(rawDamage * (1 - armor * 0.0015))`. Miss
+   (`rawDamage == 0`) is unchanged. Non-zero results are clamped to minimum 1.
+   The log shows both raw and reduced values.
+10. Subtract `effectiveDamage` from target health.
+11. If health reaches zero, remove the target from grid occupancy and its
     owner's live `ships` list.
 
 `IsTargetKnown` gets the attacker's fog grid and returns true if any target
@@ -1215,7 +1220,7 @@ AIController ------------------------------→ GridManager
 | Change terrain line-of-fire logic | `CombatResolver.HasClearLineOfFire` and `VisionResolver.TryGetFirstBlockingCell` | `HasClearLineOfFire` iterates in-range pairs; the supercover traversal lives in `VisionResolver`. |
 | Change Player A input | `TestShipController` | It should request manager operations rather than duplicate rules. |
 | Implement fog-aware AI | `AIController` plus `FogManager.GetFogGrid` | AI decisions need its own fog view; final attacks still use `CombatResolver.ResolveAttack`. |
-| Add armor/defenses/ammo spending | Future combat work around `CombatResolver.ResolveAttack`, `ChargeState`, and profiles | Ammo deduction is implemented. Armor, defenses, recharge, and side effects are not. |
+| Add armor/defenses/ammo spending | Future combat work around `CombatResolver.ResolveAttack`, `ChargeState`, and profiles | Ammo deduction and armor reduction are implemented. Defense saves, recharge, and side effects are not. |
 
 Do not put vision geometry in `FogGrid`, attack resolution in `ShipInstance`,
 or a second placement validator in an input/controller class.
@@ -1249,7 +1254,7 @@ or a second placement validator in an input/controller class.
 | Active Search | Player-activated during Search: `S` activates, `Q`/`E` rotates, `Escape`/`C` cancels. Confirmation is handled by UI. Only the selected ship's non-passive cone layer is fired per activation. | Scanning for all living ships in a single Search phase. |
 | Fog lifetime | Passive is rebuilt at `Search`; active is cleared at `End`; no ghost positions. | Persistent last-known markers, explicitly deferred. |
 | Combat gate | `ResolveAttack` calls `IsTargetKnown`; any marked/identified target cell is sufficient. | Combat reveal hook after firing. |
-| Combat resolution | d20 tier damage, ammo deduction, and destroyed-ship cleanup. All rejections log their cause. | Armor, defense saves, recharge, side effects. |
+| Combat resolution | d20 tier damage, armor reduction (`ApplyArmor`), ammo deduction, and destroyed-ship cleanup. All rejections log their cause. | Defense saves, recharge, side effects. |
 | AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. `CanFire` pre-check includes terrain line-of-fire gate. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
 | Deployment | Both players receive Wolf and Athena at hardcoded anchors. `CanPlaceShip` validation runs before each placement. | Player-controlled deployment. |
 | Movement | Keyboard and pointer dragging create read-only provisional previews from the movement-phase snapshot. Escape or C cancels back to the movement-phase positions, and Space commits all valid previews before leaving Move. `Enter` is not a movement commit key. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Richer movement UI. |

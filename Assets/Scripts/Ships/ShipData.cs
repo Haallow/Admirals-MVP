@@ -420,7 +420,7 @@ public static class ShipData
     {
         // --- Core stats ---
         ship.maxHealth = 1600;
-        ship.armor = 100;
+        ship.armor = 200;
         ship.movementRange = 5;
         ship.currentDomain = DomainType.Surface;
 

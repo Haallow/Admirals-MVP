@@ -90,10 +90,13 @@ public class CombatResolver
             weaponCharge.remaining--;
         }
 
-        target.currentHealth -= result.damage;
+        int effectiveDamage = ApplyArmor(result.damage, target.armor);
+        target.currentHealth -= effectiveDamage;
         string ammoStr = weaponCharge.remaining == -1 ? "∞" : weaponCharge.remaining.ToString();
         Debug.Log($"{attacker.owner} fires {weapon.id} at {target.owner}: {result.outcomeLabel}" +
-                  (result.damage > 0 ? $" ({result.damage} dmg)" : "") +
+                  (result.damage > 0
+                      ? $" ({result.damage} raw → {effectiveDamage} after armor {target.armor})"
+                      : "") +
                   $" | {weapon.id} ammo remaining: {ammoStr}");
 
         if (target.currentHealth <= 0)
@@ -154,6 +157,19 @@ public class CombatResolver
 
         Debug.LogWarning($"Roll {roll} did not match any tier on {weapon.id}. Check tier ranges.");
         return new RollTier(0, 0, "Error", 0);
+    }
+
+    // Applies the armor damage reduction formula: effectiveDamage = round(rawDamage * (1 - armor * 0.0015))
+    // 0.15% reduction per armor point. At armor 50 → 7.5%, 100 → 15%, 150 → 22.5%, 200 → 30%.
+    // Miss (rawDamage == 0) is returned unchanged as 0; the minimum-1 floor does not apply to misses.
+    // All non-zero results are clamped to a minimum of 1 — armor cannot negate a hit entirely.
+    public static int ApplyArmor(int rawDamage, int armor)
+    {
+        if (rawDamage == 0) return 0;
+
+        float reduced = rawDamage * (1f - armor * 0.0015f);
+        int result    = Mathf.RoundToInt(reduced);
+        return Mathf.Max(1, result);
     }
 
     public ChargeState FindChargeState(List<ChargeState> charges, string profileId)

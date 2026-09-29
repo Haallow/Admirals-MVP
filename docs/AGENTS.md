@@ -273,7 +273,9 @@ The current authoritative attack flow in `CombatResolver.ResolveAttack` is:
    are transparent. Attacker and target endpoint cells are excluded from the
    blocker test. Logs `BLOCKED_LINE_OF_FIRE` with the first blocking cell when
    every pair is blocked.
-8. Roll one d20 and apply selected tier damage.
+8. Roll one d20 and apply `ApplyArmor(rawDamage, target.armor)`:
+   `effectiveDamage = round(rawDamage * (1 - armor * 0.0015))`. Miss stays 0;
+   non-zero results are clamped to minimum 1. Log shows raw and reduced values.
 9. If health reaches zero, remove the target from grid occupancy and from the
    owner's live ship list.
 
