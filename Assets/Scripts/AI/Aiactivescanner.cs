@@ -49,7 +49,7 @@ public static class AIActiveScanPlanner
             return false;
         }
 
-        gridManager.ConfirmActiveScan(ship);
+        gridManager.ConfirmActiveScan();
         Debug.Log($"[AI] {ship.shipType} ran an active scan facing {bestForward}.");
         return true;
     }

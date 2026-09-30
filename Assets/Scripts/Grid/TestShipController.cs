@@ -50,6 +50,12 @@ public class TestShipController : MonoBehaviour
                 }
             }
 
+            if (turnManager.CurrentPhase == Phase.Search &&
+                gridManager.ActiveScanPreview != null)
+            {
+                gridManager.ConfirmActiveScan();
+            }
+
             turnManager.AdvancePhase();
         }
 
@@ -132,16 +138,6 @@ public class TestShipController : MonoBehaviour
 
         ShipInstance ship = myShips[currentShipIndex];
 
-        // --- Domain toggle (ungated by phase/owner, unchanged from before) ---
-        if (Input.GetKeyDown(KeyCode.D))
-        {
-            ship.currentDomain = ship.currentDomain == DomainType.Surface
-                ? DomainType.SubSurface
-                : DomainType.Surface;
-
-            Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
-        }
-
         if (ship.owner != turnManager.CurrentPlayer)
         {
             lastPhaseSeen = turnManager.CurrentPhase;
@@ -175,6 +171,16 @@ public class TestShipController : MonoBehaviour
             }
             else
             {
+                // Domain toggle: submarine (WolfClass) only, only during Move phase when active.
+                if (ship.shipType == ShipType.WolfClass && Input.GetKeyDown(KeyCode.D))
+                {
+                    ship.currentDomain = ship.currentDomain == DomainType.Surface
+                        ? DomainType.SubSurface
+                        : DomainType.Surface;
+
+                    Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
+                }
+
                 HandleMoveInput(ship);
             }
         }
@@ -354,31 +360,29 @@ public class TestShipController : MonoBehaviour
             }
             else
             {
-                Debug.Log("Active scan activation rejected (wrong phase, already scanned, or no cone layer).");
+                Debug.Log("Selected ship has no non-passive cone scan.");
             }
-            // Do not process any other scan input on the same frame as activation.
-            return;
         }
 
         if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.C))
         {
-            gridManager.CancelActiveScan(ship);
+            gridManager.CancelActiveScan();
             Debug.Log("Active scan preview cancelled.");
             return;
         }
 
         if (Input.GetKeyDown(KeyCode.Q))
         {
-            gridManager.RotateActiveScan(ship, -1);
+            gridManager.RotateActiveScan(-1);
         }
         else if (Input.GetKeyDown(KeyCode.E))
         {
-            gridManager.RotateActiveScan(ship, 1);
+            gridManager.RotateActiveScan(1);
         }
 
         if (Input.GetKeyDown(KeyCode.Return))
         {
-            if (gridManager.ConfirmActiveScan(ship))
+            if (gridManager.ConfirmActiveScan())
             {
                 Debug.Log("Active scan confirmed.");
             }

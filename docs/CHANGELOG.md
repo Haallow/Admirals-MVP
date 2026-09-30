@@ -8,6 +8,30 @@ update pass.
 
 ---
 
+## [Revert Multi-Ship Active Scan & Submarine Domain Phase Gate]
+
+**Summary:**
+Reverted multi-ship concurrent active scan preview system back to the single-ship
+scan model per project design. Single `activeScanPreview` state restored in
+`GridManager`, with `ActiveScanPreview` property and zero-parameter scan methods
+(`RotateActiveScan`, `ConfirmActiveScan`, `CancelActiveScan`). `GridView.DrawDebugCones`
+renders the single preview cone. `TestShipController` updated to manual single-ship
+scanning with Space auto-confirm during Search phase. `AIActiveScanPlanner` updated to
+call parameterless `ConfirmActiveScan()`. Also enforced WolfClass submarine domain
+toggle gate so domain (Surface/SubSurface) can only be toggled during Move phase when
+the submarine is the active ship.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridManager.cs` — revert activeScanPreviews dictionary and shipsScannedThisPhase to single activeScanPreview
+- `Assets/Scripts/Grid/GridView.cs` — revert DrawDebugCones to single ActiveScanPreview
+- `Assets/Scripts/Grid/TestShipController.cs` — revert active scan calls, restore Space auto-confirm, gate WolfClass domain toggle to Move phase
+- `Assets/Scripts/AI/Aiactivescanner.cs` — update ConfirmActiveScan() call
+- `docs/DEVELOPER_GUIDE.md` — update active scan flow and method signatures
+- `docs/Implementation_Status_And_Cleanup_Audit.md` — restore Enter confirms in active scan notes
+- `docs/CHANGELOG.md` — record reversion entry
+
+---
+
 ## [Carrier Plane — Reconnaissance Unit]
 
 **Summary:**

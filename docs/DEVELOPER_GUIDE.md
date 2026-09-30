@@ -729,42 +729,35 @@ requires explicit player input:
 Player presses S during Search
   → GridManager.ActivateActiveScan(ship)
       → rejected if phase is not Search
-      → rejected if ship already confirmed a scan this phase (shipsScannedThisPhase)
       → finds the ship's first non-passive Cone layer
-      → creates ActiveScanPreviewState in activeScanPreviews[ship]
-      → multiple ships can hold simultaneous independent previews
+      → creates ActiveScanPreviewState (bow, forward)
 
 Player presses Q / E
-  → GridManager.RotateActiveScan(ship, quarterTurns)
-      → rotates only that ship's ActiveScanPreviewState.Forward
+  → GridManager.RotateActiveScan(quarterTurns)
+      → rotates ActiveScanPreviewState.Forward
 
-Player presses UI confirm during Search
-  → GridManager.ConfirmActiveScan(ship)
+Player presses Enter
+  → GridManager.ConfirmActiveScan()
       → rejected if phase is not Search
       → FogManager.RunActiveSearch(ship, layer, bow, forward, match)
       → MarkActive(cell, Marked) for each detected cell
-      → removes ship from activeScanPreviews
-      → adds ship to shipsScannedThisPhase (one scan per ship per phase)
+      → clears ActiveScanPreviewState
 
 Player presses Escape / C
-  → GridManager.CancelActiveScan(ship)
-      → removes ship from activeScanPreviews with no fog change
-      → does NOT consume the ship's scan for this phase
+  → GridManager.CancelActiveScan()
+      → discards ActiveScanPreviewState with no fog change
 ```
 
 Active scans deliberately write `Marked` even if the layer's definition says
 `Absolute`; the rule is that active search reveals presence, not identity.
 
-Both `activeScanPreviews` and `shipsScannedThisPhase` are cleared at two
-phase transitions: entering `Search` (fresh state for the new player) and
-entering `End` (cleanup before the next turn).
+`activeScanPreview` is cleared at phase transitions: entering `Search` and entering `End`.
 
 ```text
 Phase.End
   → GridManager.HandlePhaseChanged(End)
   → FogManager.ClearAllActiveMarks()
-  → activeScanPreviews.Clear()
-  → shipsScannedThisPhase.Clear()
+  → activeScanPreview = null
 ```
 
 ### `VisionResolver` geometry
@@ -1055,23 +1048,23 @@ Active scanning does not run automatically on Search; it requires player input.
 Player presses S during Search
   → TestShipController.HandleActiveScanInput
   → GridManager.ActivateActiveScan(selectedShip)
-      → rejected if not Search phase or ship already scanned this phase
+      → rejected if not Search phase
   → VisionResolver.GetBowAndFacing → derives bow and forward
-  → activeScanPreviews[ship] created
-  → GridView.DrawDebugCones iterates all activeScanPreviews each frame
+  → ActiveScanPreviewState created (ship, layer, bow, forward)
+  → GridView.DrawDebugCones renders the cone preview each frame
 
 Player presses Q or E
-  → GridManager.RotateActiveScan(ship, ±1)
-  → that ship's ActiveScanPreviewState.Rotate updates Forward only
-  → other ships' previews are unaffected
+  → GridManager.RotateActiveScan(±1)
+  → ActiveScanPreviewState.Rotate updates Forward
+  → preview updates in Scene view
 
-Player presses UI confirm
-  → GridManager.ConfirmActiveScan(ship)
+Player presses Enter
+  → GridManager.ConfirmActiveScan()
       → rejected if not Search phase
   → FogManager.RunActiveSearch(ship, layer, bow, forward, match)
   → VisionResolver.GetScanResult builds cone, checks LOS per enemy cell
   → MarkActive(cell, Marked) for each unblocked detected cell
-  → ship removed from activeScanPreviews, added to shipsScannedThisPhase
+  → ActiveScanPreviewState cleared
 ```
 
 Active marks remain through Battle and are cleared at End.
@@ -1347,10 +1340,10 @@ GridManager.CanPlaceShip            → validate candidate footprint (includes o
 GridManager.CanAdvancePhase         → pure read: check whether the current phase is ready to advance
 GridManager.MoveShip                → validate and atomically move/rotate a ship (AI legacy path)
 GridManager.DeployMine              → deploy a mine behind the stern during Staging (SwordFish)
-GridManager.ActivateActiveScan      → begin per-ship scan preview (Search only; one per ship per phase)
-GridManager.RotateActiveScan        → rotate a specific ship's active scan cone preview
-GridManager.ConfirmActiveScan       → resolve a specific ship's scan and write fog marks (Search only)
-GridManager.CancelActiveScan        → discard a specific ship's scan preview with no fog change
+GridManager.ActivateActiveScan      → begin player-controlled scan preview for a ship
+GridManager.RotateActiveScan        → rotate the active scan cone preview
+GridManager.ConfirmActiveScan       → resolve the active scan and write fog marks
+GridManager.CancelActiveScan        → discard scan preview with no fog change
 GridManager.Combat.ResolveAttack    → authoritative attack path (fog + LOS + d20)
 CombatResolver.HasClearLineOfFire   → test in-range cell pairs for terrain obstruction
 CombatResolver.IsTargetKnown        → apply the fog attack gate
