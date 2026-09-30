@@ -38,6 +38,7 @@ public class ShipInstance
     public List<WeaponProfile> weapons = new List<WeaponProfile>();
     public List<DefenseProfile> defenses = new List<DefenseProfile>();
     public List<MineProfile> mines = new List<MineProfile>();
+    public List<PlaneProfile> planes = new List<PlaneProfile>();
     public List<VisionLayer> visionLayers = new List<VisionLayer>();
 
     // --- Runtime charge tracking (one entry per weapon / defense / mine profile) ---
@@ -45,6 +46,7 @@ public class ShipInstance
     public List<ChargeState> weaponCharges = new List<ChargeState>();
     public List<ChargeState> defenseCharges = new List<ChargeState>();
     public List<ChargeState> mineCharges = new List<ChargeState>();
+    public List<ChargeState> planeCharges = new List<ChargeState>();
 
     // --- Grid helper ---
     public List<Vector2Int> GetOccupiedCells()
@@ -80,6 +82,14 @@ public class ShipInstance
             int starting = mine.count.HasValue ? mine.count.Value : -1;
             int cap      = mine.count.HasValue ? mine.count.Value : -1;
             mineCharges.Add(new ChargeState(mine.id, starting, cap));
+        }
+
+        planeCharges.Clear();
+        foreach (var plane in planes)
+        {
+            int starting = plane.count.HasValue ? plane.count.Value : -1;
+            int cap      = plane.count.HasValue ? plane.count.Value : -1;
+            planeCharges.Add(new ChargeState(plane.id, starting, cap));
         }
     }
 
@@ -162,6 +172,14 @@ public class ShipInstance
             var c = i < mineCharges.Count ? mineCharges[i] : null;
             string countStr = c != null ? (c.remaining == -1 ? "∞" : c.remaining.ToString()) : "?";
             Debug.Log($"  [MINE] {m.id} | Damage: {m.damage} | Remaining: {countStr}");
+        }
+
+        for (int i = 0; i < planes.Count; i++)
+        {
+            var p = planes[i];
+            var c = i < planeCharges.Count ? planeCharges[i] : null;
+            string countStr = c != null ? (c.remaining == -1 ? "∞" : c.remaining.ToString()) : "?";
+            Debug.Log($"  [PLANE] {p.id} | LaunchRange: {p.launchRange} | Move: {p.movementRange} | Vision: {p.visionRange} | Fuel: {p.fuelTurns} | Remaining: {countStr}");
         }
     }
 }

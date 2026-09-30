@@ -26,6 +26,38 @@ public static class VisionResolver
     }
 
     public static VisionScanResult GetScanResult(
+        PlaneUnit plane,
+        VisionLayer layer,
+        List<ShipInstance> enemies)
+    {
+        var result = new VisionScanResult();
+        if (plane == null || layer == null) return result;
+        if (layer.shape != ShapeType.Halo) return result;
+
+        var sourceCells = plane.GetOccupiedCells();
+
+        foreach (var enemy in enemies)
+        {
+            if (enemy.currentHealth <= 0) continue;
+
+            if (layer.detects != DomainType.Both && layer.detects != enemy.currentDomain) continue;
+
+            foreach (var cell in enemy.GetOccupiedCells())
+            {
+                if (!IsWithinHalo(cell, sourceCells, layer.range))
+                {
+                    continue;
+                }
+
+                // Planes see over terrain (no LOS blocker test).
+                result.DetectedCells.Add(cell);
+            }
+        }
+
+        return result;
+    }
+
+    public static VisionScanResult GetScanResult(
         ShipInstance source,
         VisionLayer layer,
         List<ShipInstance> enemies,

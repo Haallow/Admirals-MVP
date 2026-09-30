@@ -123,6 +123,38 @@ public class FogManager
                 LogBlockedCells("PASSIVE", ship, layer, scan.BlockedCells);
             }
         }
+
+        // Plane vision: planes owned by this player contribute passive absolute halo vision.
+        // Planes see over terrain (no LOS blocking).
+        foreach (PlaneUnit plane in match.planes)
+        {
+            if (plane.owner != owner) continue;
+
+            VisionLayer layer = plane.visionLayer;
+            if (layer == null || !layer.isPassive) continue;
+
+            FogState result = layer.visionType == VisionType.Absolute ? FogState.Identified : FogState.Marked;
+            VisionScanResult scan = VisionResolver.GetScanResult(plane, layer, enemies);
+            List<Vector2Int> detectedCells = scan.DetectedCells;
+
+            string cells = detectedCells.Count == 0
+                ? "none"
+                : string.Join(", ", detectedCells.ConvertAll(cell => cell.ToString()).ToArray());
+
+            Debug.Log(
+                $"[VISION][PASSIVE][{ShapeLabel(layer)}][{VisionTypeLabel(layer)}] " +
+                $"plane owner={plane.owner} layer=\"{layer.id}\" " +
+                $"range={layer.range} detects={layer.detects} " +
+                $"applied={result} cells={detectedCells.Count} [{cells}] pos={plane.position}");
+
+            foreach (Vector2Int cell in detectedCells)
+            {
+                fog.MarkPassive(cell, result);
+                Debug.Log($"[VISION][PASSIVE][{ShapeLabel(layer)}][{VisionTypeLabel(layer)}] " +
+                          $"plane owner={plane.owner} cell={cell} " +
+                          $"applied={result} layer=passive");
+            }
+        }
     }
 
     private static void LogBlockedCells(

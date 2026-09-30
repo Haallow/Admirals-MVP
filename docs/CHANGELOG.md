@@ -8,6 +8,51 @@ update pass.
 
 ---
 
+## [Carrier Plane — Reconnaissance Unit]
+
+**Summary:**
+Carrier can now deploy a reconnaissance plane during Staging. The plane is a
+movable board unit that provides passive absolute halo vision (range 3, sees
+over terrain) and expires after 3 of the owning player's End phases (fuel).
+Planes are airborne — they do not occupy tiles, do not block ship movement,
+and do not participate in the exclusion zone check.
+
+Deployment: during Staging, select the Carrier and press `P`, then click a
+passable cell within launch range 4 (Chebyshev from any Carrier hull cell).
+Each Carrier has 1 sortie (no recharge).
+
+Movement: during Move phase, Tab past all ships to reach planes. Arrow keys
+move the selected plane (movement range 5, no terrain/occupancy restrictions).
+
+Vision: plane's passive absolute halo (range 3) is included in the Search-phase
+passive recompute. Planes bypass terrain LOS — they see over Impassable tiles.
+
+Fuel: decremented at each owning player's End phase. Plane removed at 0.
+
+Gizmo: diamond wireframe marker (green = PlayerA, magenta = PlayerB).
+
+No AI plane deployment in this version.
+
+**New files:**
+- `Assets/Scripts/Combat/PlaneProfile.cs` — plane definition (id, count, launchRange, movementRange, visionRange, fuelTurns)
+- `Assets/Scripts/Combat/PlaneUnit.cs` — live board plane (owner, position, fuel, movement, vision layer)
+
+**Modified files:**
+- `Assets/Scripts/Ships/ShipInstance.cs` — added `planes`, `planeCharges`; extended `InitializeCharges`, `LogStatBlock`
+- `Assets/Scripts/Ships/ShipData.cs` — Carrier gets `Recon Plane` (count 1, launch 4, move 5, vision 3, fuel 3)
+- `Assets/Scripts/Match/MatchState.cs` — added `planes : List<PlaneUnit>`
+- `Assets/Scripts/Grid/GridManager.cs` — added `DeployPlane`, `PreviewPlaneMove`, `ConfirmPlaneMove`; `HandlePhaseChanged` extended for plane position snapshots (Move) and fuel tick + removal (End)
+- `Assets/Scripts/FogOfWar/FogManager.cs` — `RecomputePassive` extended to include plane vision layers (no LOS blocking)
+- `Assets/Scripts/Grid/GridView.cs` — `DrawPlanes` added (diamond wireframe, green/magenta by owner)
+- `Assets/Scripts/Grid/TestShipController.cs` — Staging `P` key + click for plane deploy; Move Tab cycle extended to include planes; `HandlePlaneMovementInput` for arrow-key plane movement
+
+**Known debt introduced:**
+- Plane movement is committed immediately on arrow-key input (position updated directly), unlike ships which use the full provisional movement system. Acceptable for MVP.
+- No AI plane deployment. Future AI planner needed.
+- Plane weapons, shootability, and air combat are explicitly out of scope.
+
+---
+
 ## [Mine Recharge Fix — deploy from storage regardless of recharge timer]
 
 **Summary:**

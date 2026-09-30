@@ -21,15 +21,33 @@ public class TestShipController : MonoBehaviour
     private bool isDraggingMovement;
     private Vector2Int lastDragCell;
 
+    // --- Plane input state ---
+    private bool planePlacementPending = false;
+    private bool isControllingPlane = false;
+    private int currentPlaneIndex = 0;
+
     private void Update()
     {
         if (Input.GetKeyDown(KeyCode.Space))
         {
-            if (turnManager.CurrentPhase == Phase.Move &&
-                !gridManager.ConfirmProvisionalMovement())
+            if (turnManager.CurrentPhase == Phase.Move)
             {
-                Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
-                return;
+                if (!gridManager.ConfirmProvisionalMovement())
+                {
+                    Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
+                    return;
+                }
+
+                if (gridManager.Match != null)
+                {
+                    foreach (PlaneUnit p in gridManager.Match.planes)
+                    {
+                        if (p.owner == turnManager.CurrentPlayer)
+                        {
+                            gridManager.ConfirmPlaneMove(p);
+                        }
+                    }
+                }
             }
 
             turnManager.AdvancePhase();
@@ -53,9 +71,72 @@ public class TestShipController : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.Tab))
         {
-            currentShipIndex = (currentShipIndex + 1) % myShips.Count;
-            selectedWeaponIndex = 0;
-            Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+            // During Move phase, Tab cycles through ships then planes.
+            if (turnManager.CurrentPhase == Phase.Move)
+            {
+                // Count living planes owned by PlayerA.
+                int planeCount = 0;
+                if (gridManager.Match != null)
+                {
+                    foreach (PlaneUnit p in gridManager.Match.planes)
+                    {
+                        if (p.owner == PlayerId.PlayerA) planeCount++;
+                    }
+                }
+
+                if (isControllingPlane)
+                {
+                    currentPlaneIndex++;
+                    if (currentPlaneIndex >= planeCount)
+                    {
+                        // Cycled past last plane — return to first ship.
+                        isControllingPlane = false;
+                        currentPlaneIndex = 0;
+                        currentShipIndex = 0;
+                        selectedWeaponIndex = 0;
+                        Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                    }
+                    else
+                    {
+                        Debug.Log($"Switched to plane {currentPlaneIndex}");
+                    }
+                }
+                else
+                {
+                    currentShipIndex++;
+                    if (currentShipIndex >= myShips.Count)
+                    {
+                        // Cycled past last ship — switch to planes if any exist.
+                        if (planeCount > 0)
+                        {
+                            isControllingPlane = true;
+                            currentPlaneIndex = 0;
+                            currentShipIndex = Mathf.Min(currentShipIndex, myShips.Count - 1);
+                            Debug.Log($"Switched to plane {currentPlaneIndex}");
+                        }
+                        else
+                        {
+                            // No planes — wrap to first ship.
+                            currentShipIndex = 0;
+                            selectedWeaponIndex = 0;
+                            Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                        }
+                    }
+                    else
+                    {
+                        selectedWeaponIndex = 0;
+                        Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                    }
+                }
+            }
+            else
+            {
+                // Non-Move phases: standard ship cycling only.
+                currentShipIndex = (currentShipIndex + 1) % myShips.Count;
+                selectedWeaponIndex = 0;
+                isControllingPlane = false;
+                Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+            }
         }
 
         ShipInstance ship = myShips[currentShipIndex];
@@ -77,6 +158,11 @@ public class TestShipController : MonoBehaviour
             return; // not this player's turn at all
         }
 
+        if (lastPhaseSeen != turnManager.CurrentPhase)
+        {
+            planePlacementPending = false;
+        }
+
         if (turnManager.CurrentPhase == Phase.Move)
         {
             // Just entered Move phase: snapshot EVERY one of this player's ships,
@@ -89,9 +175,18 @@ public class TestShipController : MonoBehaviour
                 {
                     s.anchorAtTurnStart = s.anchor;
                 }
+                isControllingPlane = false;
+                currentPlaneIndex = 0;
             }
 
-            HandleMoveInput(ship);
+            if (isControllingPlane)
+            {
+                HandlePlaneMovementInput();
+            }
+            else
+            {
+                HandleMoveInput(ship);
+            }
         }
         else if (turnManager.CurrentPhase == Phase.Battle)
         {
@@ -227,6 +322,66 @@ public class TestShipController : MonoBehaviour
         return ship.GetOccupiedCells().Contains(cell);
     }
 
+    private PlaneUnit GetSelectedPlane()
+    {
+        if (gridManager.Match == null) return null;
+        int index = 0;
+        foreach (PlaneUnit p in gridManager.Match.planes)
+        {
+            if (p.owner == PlayerId.PlayerA)
+            {
+                if (index == currentPlaneIndex)
+                {
+                    return p;
+                }
+                index++;
+            }
+        }
+        return null;
+    }
+
+    private void HandlePlaneMovementInput()
+    {
+        PlaneUnit plane = GetSelectedPlane();
+        if (plane == null)
+        {
+            isControllingPlane = false;
+            return;
+        }
+
+        // C cancels / reverts plane move to start of turn
+        if (Input.GetKeyDown(KeyCode.C))
+        {
+            plane.position = plane.positionAtTurnStart;
+            Debug.Log($"[PLANE] Plane reverted to turn start position: {plane.positionAtTurnStart}");
+            return;
+        }
+
+        Vector2Int direction = Vector2Int.zero;
+        if (Input.GetKeyDown(KeyCode.UpArrow))    direction = Vector2Int.up;
+        else if (Input.GetKeyDown(KeyCode.DownArrow))  direction = Vector2Int.down;
+        else if (Input.GetKeyDown(KeyCode.LeftArrow))  direction = Vector2Int.left;
+        else if (Input.GetKeyDown(KeyCode.RightArrow)) direction = Vector2Int.right;
+
+        if (direction != Vector2Int.zero)
+        {
+            Vector2Int candidate = plane.position + direction;
+            if (gridManager.PreviewPlaneMove(plane, candidate))
+            {
+                Debug.Log($"[PLANE] Previewed plane move to {candidate}.");
+            }
+        }
+
+        if (Input.GetMouseButtonDown(0))
+        {
+            Vector2Int clickedCell = GetMouseGridCell();
+            if (gridManager.PreviewPlaneMove(plane, clickedCell))
+            {
+                Debug.Log($"[PLANE] Plane moved to clicked cell {clickedCell}.");
+            }
+        }
+    }
+
     private void HandleActiveScanInput(ShipInstance ship)
     {
         if (Input.GetKeyDown(KeyCode.S))
@@ -278,6 +433,44 @@ public class TestShipController : MonoBehaviour
                 Debug.Log($"Mine deployed by {ship.shipType}.");
             }
             // DeployMine logs its own rejection reason on failure.
+        }
+
+        // P key — enter plane placement targeting mode.
+        // Next left-click places the plane on the clicked cell.
+        if (Input.GetKeyDown(KeyCode.P))
+        {
+            planePlacementPending = true;
+            Debug.Log("Plane placement mode: click a cell to deploy (or Esc to cancel).");
+        }
+
+        if (planePlacementPending && (Input.GetKeyDown(KeyCode.Escape) || Input.GetMouseButtonDown(1)))
+        {
+            planePlacementPending = false;
+            Debug.Log("Plane placement mode cancelled.");
+            return;
+        }
+
+        if (planePlacementPending && Input.GetMouseButtonDown(0))
+        {
+            planePlacementPending = false;
+            Vector2Int cell = GetMouseGridCell();
+
+            // Prefer selected ship if it has plane capability; otherwise auto-select carrier if available.
+            ShipInstance launchShip = ship;
+            if (launchShip.planes.Count == 0 && gridManager.Match != null)
+            {
+                var carrier = gridManager.Match.playerA.ships.Find(s => s.planes.Count > 0);
+                if (carrier != null)
+                {
+                    launchShip = carrier;
+                }
+            }
+
+            if (gridManager.DeployPlane(launchShip, cell))
+            {
+                Debug.Log($"Plane deployed to {cell} from {launchShip.shipType}.");
+            }
+            // DeployMine / DeployPlane logs its own rejection reason on failure.
         }
     }
 

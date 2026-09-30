@@ -518,6 +518,20 @@ public static class ShipData
                 isPassive: false
             )
         };
+        
+        // --- Planes ---
+        ship.planes = new List<PlaneProfile>
+        {
+            new PlaneProfile(
+                id:            "Recon Plane",
+                count:         1,
+                launchRange:   4,     // must deploy within 4 cells of any Carrier hull cell
+                movementRange: 5,     // can fly up to 5 cells per Move phase
+                visionRange:   3,
+                fuelTurns:     3
+            )
+        };
+
         ship.InitializeCharges();
     }
 }

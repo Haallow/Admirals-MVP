@@ -46,6 +46,7 @@ public class GridView : MonoBehaviour
         DrawDebugCones();
         DrawDebugHalos();
         DrawMines();
+        DrawPlanes();
     }
 
     private void DrawMovementRanges()
@@ -170,7 +171,7 @@ public class GridView : MonoBehaviour
     {
         // TEMPORARY: Cone overlay is visualization only; LOS classification uses
         // the same VisionResolver helper as the authoritative scan.
-        // Iterates all per-ship previews — multiple ships can have simultaneous previews.
+        // Iterates all per-ship previews â€” multiple ships can have simultaneous previews.
         foreach (ActiveScanPreviewState preview in gridManager.ActiveScanPreviews)
         {
             foreach (var c in preview.GetConeCells())
@@ -255,7 +256,7 @@ public class GridView : MonoBehaviour
     private void DrawMines()
     {
         // Draws all live mines from MatchState.
-        // Own mines: solid yellow X wireframe — the deployer always sees their mines.
+        // Own mines: solid yellow X wireframe â€” the deployer always sees their mines.
         // Enemy mines: drawn in a dimmer orange for prototyping visibility in the
         // Scene view. In production the fog layer would hide them; the Gizmo shows
         // both sides so developers can verify placement and detonation easily.
@@ -279,6 +280,52 @@ public class GridView : MonoBehaviour
             // approximated with two thin wire cubes along the diagonals.
             Gizmos.DrawWireCube(center, new Vector3(size, size * 0.15f, 0f));
             Gizmos.DrawWireCube(center, new Vector3(size * 0.15f, size, 0f));
+        }
+    }
+
+    private void DrawPlanes()
+    {
+        // Draws all live planes from MatchState as diamond wireframe markers.
+        // Distinct from the mine X marker â€” a diamond shape indicates airborne unit.
+        // Color by owner: green = PlayerA, magenta = PlayerB.
+        if (gridManager.Match == null) return;
+
+        float size = gridManager.CellSize * 0.4f;
+
+        foreach (PlaneUnit plane in gridManager.Match.planes)
+        {
+            Vector3 center = new Vector3(
+                plane.position.x * gridManager.CellSize,
+                plane.position.y * gridManager.CellSize,
+                0f);
+
+            // Color by owner.
+            Gizmos.color = plane.owner == PlayerId.PlayerA
+                ? new Color(0f, 1f, 0.4f, 1f)    // green
+                : new Color(1f, 0.2f, 0.8f, 1f);  // magenta
+
+            // Draw a diamond shape using four lines.
+            Vector3 top    = center + new Vector3(0, size, 0);
+            Vector3 right  = center + new Vector3(size, 0, 0);
+            Vector3 bottom = center + new Vector3(0, -size, 0);
+            Vector3 left   = center + new Vector3(-size, 0, 0);
+
+            Gizmos.DrawLine(top, right);
+            Gizmos.DrawLine(right, bottom);
+            Gizmos.DrawLine(bottom, left);
+            Gizmos.DrawLine(left, top);
+
+            // Inner smaller diamond for visibility.
+            float inner = size * 0.5f;
+            Vector3 iTop    = center + new Vector3(0, inner, 0);
+            Vector3 iRight  = center + new Vector3(inner, 0, 0);
+            Vector3 iBottom = center + new Vector3(0, -inner, 0);
+            Vector3 iLeft   = center + new Vector3(-inner, 0, 0);
+
+            Gizmos.DrawLine(iTop, iRight);
+            Gizmos.DrawLine(iRight, iBottom);
+            Gizmos.DrawLine(iBottom, iLeft);
+            Gizmos.DrawLine(iLeft, iTop);
         }
     }
 }

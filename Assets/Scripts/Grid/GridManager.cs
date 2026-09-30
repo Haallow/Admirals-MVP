@@ -218,7 +218,7 @@ public class GridManager : MonoBehaviour
 
     // Deploys a mine one cell behind the stern of the given ship.
     // Only valid during Staging. Consumes one mine charge on success.
-    // Fails silently (with a log) if any validation check fails — no charge is spent.
+    // Fails silently (with a log) if any validation check fails â€” no charge is spent.
     public bool DeployMine(ShipInstance ship)
     {
         if (ship == null)
@@ -244,7 +244,7 @@ public class GridManager : MonoBehaviour
         for (int i = 0; i < ship.mines.Count; i++)
         {
             ChargeState candidate = i < ship.mineCharges.Count ? ship.mineCharges[i] : null;
-            // Check remaining > 0 directly — recharge only replenishes spent mines,
+            // Check remaining > 0 directly â€” recharge only replenishes spent mines,
             // it does not lock mines that are physically still in storage.
             if (candidate != null && candidate.remaining > 0)
             {
@@ -309,7 +309,7 @@ public class GridManager : MonoBehaviour
             }
         }
 
-        // All checks passed — deploy.
+        // All checks passed â€” deploy.
         match.mines.Add(new MineTile(ship.owner, deployCell, mineProfile.damage));
         mineCharge.remaining--;
         if (mineProfile.rechargeTime > 0)
@@ -321,9 +321,138 @@ public class GridManager : MonoBehaviour
         return true;
     }
 
+    // Deploys a reconnaissance plane to the given target cell during Staging.
+    // The plane is launched from a Carrier â€” launch range is validated as
+    // Chebyshev distance from any hull cell to the target cell.
+    // Planes do NOT occupy tiles (they are airborne).
+    public bool DeployPlane(ShipInstance ship, Vector2Int targetCell)
+    {
+        if (ship == null)
+        {
+            return false;
+        }
+
+        if (turnManager.CurrentPhase != Phase.Staging)
+        {
+            Debug.Log($"[PLANE] Deploy rejected: not Staging phase.");
+            return false;
+        }
+
+        if (ship.owner != turnManager.CurrentPlayer)
+        {
+            Debug.Log($"[PLANE] Deploy rejected: not {ship.owner}'s turn.");
+            return false;
+        }
+
+        // Find a ready plane charge on this ship.
+        ChargeState planeCharge = null;
+        PlaneProfile planeProfile = null;
+        for (int i = 0; i < ship.planes.Count; i++)
+        {
+            ChargeState candidate = i < ship.planeCharges.Count ? ship.planeCharges[i] : null;
+            if (candidate != null && candidate.remaining > 0)
+            {
+                planeCharge = candidate;
+                planeProfile = ship.planes[i];
+                break;
+            }
+        }
+
+        if (planeCharge == null || planeProfile == null)
+        {
+            Debug.Log($"[PLANE] Deploy rejected: {ship.shipType} has no sorties remaining.");
+            return false;
+        }
+
+        // Validate target cell: in bounds.
+        if (!IsInBounds(targetCell))
+        {
+            Debug.Log($"[PLANE] Deploy rejected: cell {targetCell} is out of bounds.");
+            return false;
+        }
+
+        // Validate target cell: not Impassable terrain (per Test 3 spec).
+        if (!IsTerrainPassable(targetCell))
+        {
+            Debug.Log($"[PLANE] Deploy rejected: cell {targetCell} is impassable terrain.");
+            return false;
+        }
+
+        // Launch range check: minimum Chebyshev distance from any hull cell
+        // to targetCell must be <= profile.launchRange.
+        List<Vector2Int> hullCells = ship.GetOccupiedCells();
+        int minDist = int.MaxValue;
+        foreach (Vector2Int hullCell in hullCells)
+        {
+            int dist = DistanceBetween(hullCell, targetCell);
+            if (dist < minDist) minDist = dist;
+        }
+
+        if (minDist > planeProfile.launchRange)
+        {
+            Debug.Log($"[PLANE] Deploy rejected: cell {targetCell} is out of launch range " +
+                      $"(distance {minDist} > launch range {planeProfile.launchRange}).");
+            return false;
+        }
+
+        // All checks passed â€” deploy.
+        // Planes do NOT check for ship occupancy â€” they fly over ships.
+        PlaneUnit plane = new PlaneUnit(
+            ship.owner, targetCell, planeProfile.fuelTurns,
+            planeProfile.movementRange, planeProfile.visionRange);
+        match.planes.Add(plane);
+
+        planeCharge.remaining--;
+        Debug.Log($"[PLANE] {ship.owner} deployed {planeProfile.id} at {targetCell}. " +
+                  $"Launch distance: {minDist}. Fuel: {planeProfile.fuelTurns}. " +
+                  $"Sorties remaining: {planeCharge.remaining}");
+
+        if (Fog != null && match != null)
+        {
+            Fog.RecomputeAllPassive(match);
+        }
+
+        return true;
+    }
+
+    // Previews a plane move during Move phase.
+    // Validates Chebyshev distance from positionAtTurnStart.
+    // Planes do not interact with tiles, exclusion zones, or other ships.
+    public bool PreviewPlaneMove(PlaneUnit plane, Vector2Int candidatePosition)
+    {
+        if (plane == null)
+        {
+            return false;
+        }
+
+        int dist = DistanceBetween(plane.positionAtTurnStart, candidatePosition);
+        if (dist > plane.movementRange)
+        {
+            Debug.Log($"[PLANE] Move rejected: distance {dist} exceeds movement range {plane.movementRange}.");
+            return false;
+        }
+
+        if (!IsInBounds(candidatePosition))
+        {
+            Debug.Log($"[PLANE] Move rejected: cell {candidatePosition} is out of bounds.");
+            return false;
+        }
+
+        // Planes fly over everything â€” no terrain or occupancy check.
+        plane.position = candidatePosition;
+        return true;
+    }
+
+    // Commits a plane move.
+    public void ConfirmPlaneMove(PlaneUnit plane)
+    {
+        if (plane == null) return;
+        Debug.Log($"[PLANE] Plane move committed to {plane.position}.");
+    }
+
     // Checks whether the given ship is standing on any mines after moving.
     // Collects all triggered mines first, then applies total damage once,
-    // then removes them all — avoids mid-iteration modification and
+    // then removes them all â€” avoids mid-iteration modification and
     // ensures a ship at 0 HP is only destroyed once regardless of mine count.
     private void ResolveMinesFor(ShipInstance ship)
     {
@@ -350,7 +479,7 @@ public class GridManager : MonoBehaviour
         foreach (MineTile mine in triggered)
         {
             totalDamage += mine.damage;
-            Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} hit mine at {mine.position} — {mine.damage} damage.");
+            Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} hit mine at {mine.position} â€” {mine.damage} damage.");
         }
 
         // Remove triggered mines before applying damage so a destroyed ship
@@ -655,12 +784,12 @@ public class GridManager : MonoBehaviour
 
     // Returns true when none of the candidate cells are within Chebyshev
     // distance 1 of any occupied cell belonging to a different ship.
-    // excludeShip is the ship being placed/moved — it is never checked
+    // excludeShip is the ship being placed/moved â€” it is never checked
     // against itself, which allows the ship to overlap its own current cells
     // during rotation and movement validation.
     // checkCommittedTiles: when true, also checks the authoritative tile
     //   dictionary (used by CanPlaceShip for deployment and the AI legacy path).
-    //   When false, only provisionalExcludeCells is checked — used by the
+    //   When false, only provisionalExcludeCells is checked â€” used by the
     //   preview and confirmation paths so ships are only blocked by other
     //   ships' provisional positions, not their committed start-of-phase tiles.
     // provisionalExcludeCells: other ships' preview footprint cells that have
@@ -775,6 +904,16 @@ public class GridManager : MonoBehaviour
                 {
                     provisionalMoves[ship] = new ProvisionalMovementState(ship);
                 }
+
+                // Snapshot plane positions for movement range validation.
+                PlayerId actingPlayer = turnManager.CurrentPlayer;
+                foreach (PlaneUnit plane in match.planes)
+                {
+                    if (plane.owner == actingPlayer)
+                    {
+                        plane.positionAtTurnStart = plane.position;
+                    }
+                }
             }
         }
         else if (newPhase == Phase.Staging)
@@ -811,10 +950,30 @@ public class GridManager : MonoBehaviour
                 {
                     ship.TickRecharge();
                 }
+
+                // Tick plane fuel for the acting player's planes.
+                // Decrement fuelRemaining; remove planes that reach 0.
+                PlayerId actingPlayer = turnManager.CurrentPlayer;
+                for (int i = match.planes.Count - 1; i >= 0; i--)
+                {
+                    PlaneUnit plane = match.planes[i];
+                    if (plane.owner != actingPlayer) continue;
+
+                    plane.fuelRemaining--;
+                    Debug.Log($"[PLANE] {plane.owner} plane at {plane.position} fuel: {plane.fuelRemaining}");
+
+                    if (plane.fuelRemaining <= 0)
+                    {
+                        match.planes.RemoveAt(i);
+                        Debug.Log($"[PLANE] {plane.owner} plane at {plane.position} ran out of fuel and was removed.");
+                    }
+                }
+
+                Fog.RecomputeAllPassive(match);
             }
         }
         // Staging: mine deployment is player-activated via DeployMine(ship).
-        // Planes and repair are not yet built.
+        // Plane deployment is player-activated via DeployPlane(ship, cell).
     }
 
 }

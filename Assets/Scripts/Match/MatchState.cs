@@ -12,6 +12,10 @@ public class MatchState
     // GridManager is authoritative for deploying and removing mines.
     public List<MineTile> mines = new List<MineTile>();
 
+    // All live reconnaissance planes on the board, owned by both sides.
+    // GridManager is authoritative for deploying, moving, and removing planes.
+    public List<PlaneUnit> planes = new List<PlaneUnit>();
+
     public MatchState(PlayerState playerA, PlayerState playerB)
     {
         this.playerA = playerA;
