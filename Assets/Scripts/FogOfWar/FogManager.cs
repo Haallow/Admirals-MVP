@@ -61,6 +61,19 @@ public class FogManager
         }
 
         LogBlockedCells("NON-PASSIVE", ship, layer, scan.BlockedCells);
+
+        // Mine reveal: if an active scan covers a cell that contains an enemy mine,
+        // mark it in the scanner's fog. Only active scans reveal mines — passive fog
+        // is never updated with mine positions per the locked design rules.
+        PlayerId enemyOwner = ship.owner == PlayerId.PlayerA ? PlayerId.PlayerB : PlayerId.PlayerA;
+        foreach (MineTile mine in match.mines)
+        {
+            if (mine.owner != enemyOwner) continue; // only reveal enemy mines
+            if (!detectedCells.Contains(mine.position)) continue;
+
+            fog.MarkActive(mine.position, FogState.Marked);
+            Debug.Log($"[MINE][FOG] {ship.owner} active scan revealed enemy mine at {mine.position}.");
+        }
     }
 
     public void ClearAllActiveMarks()

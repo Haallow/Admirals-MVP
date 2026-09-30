@@ -25,7 +25,11 @@ Known gaps still present in the prototype:
   it. Confirmation is handled by the UI layer, not a substitute keyboard
   shortcut. Passive vision remains automatic.
 - Fog state is runtime-only; there is no player-facing UI.
-- Armor, defense rolls, ammo consumption, recharge, and defense side effects are not implemented.
+- Armor reduction is implemented (`CombatResolver.ApplyArmor`). Defense rolls,
+  recharge, and defense side effects are not yet implemented.
+- Ammo consumption is implemented. Mines are implemented for the SwordFish
+  class (`GridManager.DeployMine`, `MatchState.mines`). Planes and repair ship
+  are not yet built.
 - There is no win-condition/game-over flow.
 - Temporary fog logs and cone-count commands are removed; `GridView` retains
   the cone and halo Gizmos as planned visualization surfaces.
@@ -96,6 +100,7 @@ TurnManager.AdvancePhase()
 GridManager.HandlePhaseChanged()
   -> Move    -> snapshot provisional states for current player's ships
   -> Staging -> confirm provisional movement atomically
+              (mine deployment: player activates via DeployMine during Staging)
   -> Search  -> Fog.RecomputeAllPassive(match)
               (active scan requires player activation via ActivateActiveScan /
                ConfirmActiveScan — it is not triggered automatically)
@@ -343,6 +348,7 @@ When making changes, prefer these locations:
 | Change halo/cone geometry or domain filtering | `VisionResolver` |
 | Change attack legality and damage resolution | `CombatResolver.ResolveAttack` via `GridManager.Combat` |
 | Change terrain line-of-fire logic | `CombatResolver.HasClearLineOfFire` via `VisionResolver.TryGetFirstBlockingCell` |
+| Change mine deployment or detonation logic | `GridManager.DeployMine`, `GridManager.ResolveMinesFor`, `MatchState.mines` |
 | Change Player A input | `TestShipController` |
 | Implement fog-aware AI | `AIController`, `FogManager.GetFogGrid` |
 

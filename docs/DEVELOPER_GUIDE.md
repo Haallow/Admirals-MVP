@@ -160,7 +160,13 @@ in the scene and is intentionally separate from gameplay authority.
   before rolling, consuming ammunition, or applying damage. The AI's weapon
   pre-check (`CanFire`) also applies the line-of-fire gate so it never scores
   a weapon whose every in-range pair is blocked.
-- Staging will gain mines, planes, and a repair ship with self-heal behavior.
+- Staging mine deployment is implemented for the SwordFish class: `M` key
+  during Staging calls `GridManager.DeployMine(ship)`, which places a
+  `MineTile` one cell behind the stern. Mines deal 600 flat damage (no roll,
+  no armor, no defenses) to any ship — friendly or enemy — that confirms
+  movement onto the mine's cell. Enemy mines are invisible until revealed by
+  active sonar scan. Mines are stored in `MatchState.mines`.
+- Planes and repair ship are still planned for future Staging milestones.
 - Basic UI will expose fog/scan toggles, health bars, phase/ship/weapon
   indicators, and movement/scan previews.
 
@@ -258,7 +264,8 @@ TurnManager.AdvancePhase()
 
 GridManager.HandlePhaseChanged()
     ├── Move    → snapshot provisional states for current player's ships
-    ├── Staging → confirm provisional movement atomically
+    ├── Staging → confirm provisional movement atomically;
+    │             mine deployment is player-activated (M key → DeployMine)
     ├── Search  → Fog.RecomputeAllPassive(match)
     │             (active scan is player-activated: S → ActivateActiveScan,
     │              Q/E → RotateActiveScan, UI confirms → ConfirmActiveScan,
@@ -548,6 +555,18 @@ ships via `GridManager.HandlePhaseChanged`. However, nothing currently sets
 presently inert and has no observable effect on gameplay. It will activate
 automatically when mines, planes, or other future systems set a recharge value
 on spend.
+
+#### `MineProfile.cs`
+
+Immutable mine definition: `id`, nullable `count`, and flat `damage`. Follows
+the same pattern as `WeaponProfile` and `DefenseProfile`. Runtime remaining
+uses tracked in `ShipInstance.mineCharges`.
+
+#### `MineTile.cs`
+
+A live mine on the board. Stores `owner`, `position`, and `damage` (copied
+from the profile at deploy time). Owned by `MatchState.mines`. Removed from
+the list immediately on detonation — no detonated flag needed.
 ---
 
 ### `Assets/Scripts/AI/`
@@ -795,7 +814,8 @@ Player A Move
     ↓
 Player A Staging       phase advances only when CanAdvancePhase(Move) passes;
                        ships may not move adjacent to each other (one-tile
-                       exclusion zone enforced in CanPlaceShip and preview checks)
+                       exclusion zone enforced in CanPlaceShip and preview checks);
+                       SwordFish can deploy a mine with M key (DeployMine)
     ↓
 Player A Search        passive recompute, then active scan
     ↓
@@ -1265,6 +1285,7 @@ or a second placement validator in an input/controller class.
 | Combat resolution | d20 tier damage, armor reduction (`ApplyArmor`), ammo deduction, and destroyed-ship cleanup. All rejections log their cause. | Defense saves, recharge, side effects. |
 | AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. `CanFire` pre-check includes terrain line-of-fire gate. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
 | Deployment | Both players receive Wolf and Athena at hardcoded anchors. `CanPlaceShip` validation runs before each placement. | Player-controlled deployment. |
+| Staging — mines | SwordFish deploys `Contact Mine` (600 flat damage, no roll, no armor, no defenses) one cell behind stern during Staging with `M` key. Mines in `MatchState.mines` trigger on confirmed movement (human and AI). Enemy mines hidden until active sonar scan reveals them as `Marked`. | Planes, repair ship. |
 | Movement | Keyboard and pointer dragging create read-only provisional previews from the movement-phase snapshot. Escape or C cancels back to the movement-phase positions, and Space commits all valid previews before leaving Move. `Enter` is not a movement commit key. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Richer movement UI. |
 | Cleanup | Terrain, board, cone, and halo verification Gizmos remain; temporary fog logs and cone-count commands are removed. | Remove other prototype-only verification helpers when no longer useful. |
 | Match end | Dead ships are removed from grid and live fleet. | Win-condition/game-over handling. |
@@ -1325,6 +1346,7 @@ TestShipController→ prototype Player A input
 GridManager.CanPlaceShip            → validate candidate footprint (includes one-tile exclusion zone)
 GridManager.CanAdvancePhase         → pure read: check whether the current phase is ready to advance
 GridManager.MoveShip                → validate and atomically move/rotate a ship (AI legacy path)
+GridManager.DeployMine              → deploy a mine behind the stern during Staging (SwordFish)
 GridManager.ActivateActiveScan      → begin per-ship scan preview (Search only; one per ship per phase)
 GridManager.RotateActiveScan        → rotate a specific ship's active scan cone preview
 GridManager.ConfirmActiveScan       → resolve a specific ship's scan and write fog marks (Search only)

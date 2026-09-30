@@ -12,16 +12,31 @@ public class ChargeState
     // stored as a plain int here because ChargeState is mutable runtime data).
     public int remaining;
 
+    // Maximum this slot can hold. -1 = infinite (same sentinel as remaining).
+    // Used by Recharge() to cap replenishment — e.g. mines recharge up to 2, never beyond.
+    public int maxCapacity;
+
     // Turns until this slot recharges after being spent. 0 = ready now.
-    // Recharge logic doesn't exist yet — stored here so the field is available when needed (Milestone 6+).
     public int turnsUntilRecharge;
 
-    public ChargeState(string profileId, int remaining)
+    public ChargeState(string profileId, int remaining, int maxCapacity = -1)
     {
-        this.profileId = profileId;
-        this.remaining = remaining;
+        this.profileId      = profileId;
+        this.remaining      = remaining;
+        this.maxCapacity    = maxCapacity;
         this.turnsUntilRecharge = 0;
     }
 
     public bool IsReady => turnsUntilRecharge == 0 && remaining != 0;
+
+    // Called by TickRecharge when turnsUntilRecharge just decremented to 0.
+    // Increments remaining by 1, capped at maxCapacity (-1 = no cap).
+    // Does nothing if remaining is already at or above the cap, or if
+    // remaining is the infinite sentinel (-1).
+    public void Recharge()
+    {
+        if (remaining == -1) return;                          // infinite — nothing to recharge
+        if (maxCapacity != -1 && remaining >= maxCapacity) return; // already at cap
+        remaining++;
+    }
 }

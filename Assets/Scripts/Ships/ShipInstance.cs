@@ -37,12 +37,14 @@ public class ShipInstance
     // --- Combat profiles (immutable definitions set at ship creation) ---
     public List<WeaponProfile> weapons = new List<WeaponProfile>();
     public List<DefenseProfile> defenses = new List<DefenseProfile>();
+    public List<MineProfile> mines = new List<MineProfile>();
     public List<VisionLayer> visionLayers = new List<VisionLayer>();
 
-    // --- Runtime charge tracking (one entry per weapon / defense profile) ---
+    // --- Runtime charge tracking (one entry per weapon / defense / mine profile) ---
     // Populated by InitializeCharges(). These change as the game is played.
     public List<ChargeState> weaponCharges = new List<ChargeState>();
     public List<ChargeState> defenseCharges = new List<ChargeState>();
+    public List<ChargeState> mineCharges = new List<ChargeState>();
 
     // --- Grid helper ---
     public List<Vector2Int> GetOccupiedCells()
@@ -71,12 +73,20 @@ public class ShipInstance
             int starting = defense.uses.HasValue ? defense.uses.Value : -1;
             defenseCharges.Add(new ChargeState(defense.id, starting));
         }
+
+        mineCharges.Clear();
+        foreach (var mine in mines)
+        {
+            int starting = mine.count.HasValue ? mine.count.Value : -1;
+            int cap      = mine.count.HasValue ? mine.count.Value : -1;
+            mineCharges.Add(new ChargeState(mine.id, starting, cap));
+        }
     }
 
-    // Decrements turnsUntilRecharge by 1 for every weapon and defense charge,
-    // never going below 0. Called once at Phase.End for the acting player's ships.
-    // Has no effect on any slot that is already at 0 (the common case today,
-    // since nothing currently sets turnsUntilRecharge above 0).
+    // Decrements turnsUntilRecharge by 1 for every weapon, defense, and mine charge,
+    // never going below 0. When turnsUntilRecharge reaches 0 on a mine charge,
+    // Recharge() is called to replenish one mine up to its maxCapacity.
+    // Called once at Phase.End for the acting player's ships.
     public void TickRecharge()
     {
         foreach (ChargeState charge in weaponCharges)
@@ -92,6 +102,18 @@ public class ShipInstance
             if (charge.turnsUntilRecharge > 0)
             {
                 charge.turnsUntilRecharge--;
+            }
+        }
+
+        foreach (ChargeState charge in mineCharges)
+        {
+            if (charge.turnsUntilRecharge > 0)
+            {
+                charge.turnsUntilRecharge--;
+                if (charge.turnsUntilRecharge == 0)
+                {
+                    charge.Recharge();
+                }
             }
         }
     }
@@ -132,6 +154,14 @@ public class ShipInstance
             bool currentlyActive = !surfacedOnly || currentDomain == DomainType.Surface;
             string activeStr = surfacedOnly ? $" | Active now: {currentlyActive} (onlyWhileSurfaced)" : "";
             Debug.Log($"  [VISION] {v.id} | {v.shape} r={v.range} | Detects: {v.detects} | {v.visionType} | Passive: {v.isPassive}{activeStr}");
+        }
+
+        for (int i = 0; i < mines.Count; i++)
+        {
+            var m = mines[i];
+            var c = i < mineCharges.Count ? mineCharges[i] : null;
+            string countStr = c != null ? (c.remaining == -1 ? "∞" : c.remaining.ToString()) : "?";
+            Debug.Log($"  [MINE] {m.id} | Damage: {m.damage} | Remaining: {countStr}");
         }
     }
 }

@@ -45,6 +45,7 @@ public class GridView : MonoBehaviour
         DrawProvisionalShips();
         DrawDebugCones();
         DrawDebugHalos();
+        DrawMines();
     }
 
     private void DrawMovementRanges()
@@ -248,6 +249,36 @@ public class GridView : MonoBehaviour
                     }
                 }
             }
+        }
+    }
+
+    private void DrawMines()
+    {
+        // Draws all live mines from MatchState.
+        // Own mines: solid yellow X wireframe — the deployer always sees their mines.
+        // Enemy mines: drawn in a dimmer orange for prototyping visibility in the
+        // Scene view. In production the fog layer would hide them; the Gizmo shows
+        // both sides so developers can verify placement and detonation easily.
+        if (gridManager.Match == null) return;
+
+        float size = gridManager.CellSize * 0.5f;
+
+        foreach (MineTile mine in gridManager.Match.mines)
+        {
+            Vector3 center = new Vector3(
+                mine.position.x * gridManager.CellSize,
+                mine.position.y * gridManager.CellSize,
+                0f);
+
+            // Color by owner: yellow = PlayerA, orange = PlayerB.
+            Gizmos.color = mine.owner == PlayerId.PlayerA
+                ? new Color(1f, 0.95f, 0f, 1f)
+                : new Color(1f, 0.55f, 0f, 1f);
+
+            // Draw an X using two crossed wire cubes rotated 45 degrees,
+            // approximated with two thin wire cubes along the diagonals.
+            Gizmos.DrawWireCube(center, new Vector3(size, size * 0.15f, 0f));
+            Gizmos.DrawWireCube(center, new Vector3(size * 0.15f, size, 0f));
         }
     }
 }

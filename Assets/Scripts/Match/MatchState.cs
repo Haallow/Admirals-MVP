@@ -8,6 +8,10 @@ public class MatchState
     public PlayerState playerA;
     public PlayerState playerB;
 
+    // All live mines on the board, owned by both sides.
+    // GridManager is authoritative for deploying and removing mines.
+    public List<MineTile> mines = new List<MineTile>();
+
     public MatchState(PlayerState playerA, PlayerState playerB)
     {
         this.playerA = playerA;

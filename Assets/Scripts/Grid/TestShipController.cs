@@ -102,19 +102,16 @@ public class TestShipController : MonoBehaviour
         {
             HandleActiveScanInput(ship);
         }
+        else if (turnManager.CurrentPhase == Phase.Staging)
+        {
+            HandleStagingInput(ship);
+        }
 
         lastPhaseSeen = turnManager.CurrentPhase;
     }
 
     private void HandleMoveInput(ShipInstance ship)
     {
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            gridManager.CancelProvisionalMovement();
-            Debug.Log("Provisional movement cancelled.");
-            return;
-        }
-
         if (Input.GetKeyDown(KeyCode.C))
         {
             gridManager.CancelProvisionalMovement();
@@ -268,6 +265,19 @@ public class TestShipController : MonoBehaviour
             {
                 Debug.Log("Active scan confirmed.");
             }
+        }
+    }
+
+    private void HandleStagingInput(ShipInstance ship)
+    {
+        // M — deploy a mine one cell behind the selected ship's stern.
+        if (Input.GetKeyDown(KeyCode.M))
+        {
+            if (gridManager.DeployMine(ship))
+            {
+                Debug.Log($"Mine deployed by {ship.shipType}.");
+            }
+            // DeployMine logs its own rejection reason on failure.
         }
     }
 

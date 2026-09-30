@@ -344,6 +344,18 @@ public static class ShipData
                 isPassive: false
             )
         };
+
+        // --- Mines ---
+        ship.mines = new List<MineProfile>
+        {
+            new MineProfile(
+                id: "Contact Mine",
+                count: 2,
+                damage: 600,
+                rechargeTime: 2
+            )
+        };
+
         ship.InitializeCharges();
     }
 

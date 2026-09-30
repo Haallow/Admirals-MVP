@@ -216,6 +216,160 @@ public class GridManager : MonoBehaviour
         provisionalMoves.Clear();
     }
 
+    // Deploys a mine one cell behind the stern of the given ship.
+    // Only valid during Staging. Consumes one mine charge on success.
+    // Fails silently (with a log) if any validation check fails — no charge is spent.
+    public bool DeployMine(ShipInstance ship)
+    {
+        if (ship == null)
+        {
+            return false;
+        }
+
+        if (turnManager.CurrentPhase != Phase.Staging)
+        {
+            Debug.Log($"[MINE] Deploy rejected: not Staging phase.");
+            return false;
+        }
+
+        if (ship.owner != turnManager.CurrentPlayer)
+        {
+            Debug.Log($"[MINE] Deploy rejected: not {ship.owner}'s turn.");
+            return false;
+        }
+
+        // Find a ready mine charge on this ship.
+        ChargeState mineCharge = null;
+        MineProfile mineProfile = null;
+        for (int i = 0; i < ship.mines.Count; i++)
+        {
+            ChargeState candidate = i < ship.mineCharges.Count ? ship.mineCharges[i] : null;
+            if (candidate != null && candidate.IsReady)
+            {
+                mineCharge = candidate;
+                mineProfile = ship.mines[i];
+                break;
+            }
+        }
+
+        if (mineCharge == null || mineProfile == null)
+        {
+            Debug.Log($"[MINE] Deploy rejected: {ship.shipType} has no mines remaining.");
+            return false;
+        }
+
+        // Derive stern cell: occupied cell furthest from the bow in the -forward direction,
+        // then one step further back.
+        VisionResolver.GetBowAndFacing(ship, out Vector2Int bow, out Vector2Int forward);
+        List<Vector2Int> occupied = ship.GetOccupiedCells();
+
+        // Find the stern (cell with maximum distance from bow in the -forward direction).
+        Vector2Int stern = bow;
+        int maxBackDist = 0;
+        foreach (Vector2Int cell in occupied)
+        {
+            // Project cell onto -forward axis relative to bow.
+            int backDist = -(forward.x * (cell.x - bow.x) + forward.y * (cell.y - bow.y));
+            if (backDist > maxBackDist)
+            {
+                maxBackDist = backDist;
+                stern = cell;
+            }
+        }
+
+        Vector2Int deployCell = stern - forward; // one step behind the stern
+
+        // Validate deploy cell.
+        if (!IsInBounds(deployCell))
+        {
+            Debug.Log($"[MINE] Deploy rejected: cell {deployCell} is out of bounds.");
+            return false;
+        }
+
+        if (!IsTerrainPassable(deployCell))
+        {
+            Debug.Log($"[MINE] Deploy rejected: cell {deployCell} is impassable terrain.");
+            return false;
+        }
+
+        if (IsOccupied(deployCell))
+        {
+            Debug.Log($"[MINE] Deploy rejected: cell {deployCell} is occupied by a ship.");
+            return false;
+        }
+
+        foreach (MineTile existing in match.mines)
+        {
+            if (existing.position == deployCell)
+            {
+                Debug.Log($"[MINE] Deploy rejected: a mine already exists at {deployCell}.");
+                return false;
+            }
+        }
+
+        // All checks passed — deploy.
+        match.mines.Add(new MineTile(ship.owner, deployCell, mineProfile.damage));
+        mineCharge.remaining--;
+        if (mineProfile.rechargeTime > 0)
+        {
+            mineCharge.turnsUntilRecharge = mineProfile.rechargeTime;
+        }
+        Debug.Log($"[MINE] {ship.owner} deployed {mineProfile.id} at {deployCell}. Mines remaining: {mineCharge.remaining}" +
+                  (mineProfile.rechargeTime > 0 ? $" (recharges in {mineProfile.rechargeTime} turns)" : ""));
+        return true;
+    }
+
+    // Checks whether the given ship is standing on any mines after moving.
+    // Collects all triggered mines first, then applies total damage once,
+    // then removes them all — avoids mid-iteration modification and
+    // ensures a ship at 0 HP is only destroyed once regardless of mine count.
+    private void ResolveMinesFor(ShipInstance ship)
+    {
+        if (match == null || match.mines.Count == 0) return;
+
+        List<Vector2Int> shipCells = ship.GetOccupiedCells();
+        List<MineTile> triggered = new List<MineTile>();
+
+        foreach (MineTile mine in match.mines)
+        {
+            foreach (Vector2Int cell in shipCells)
+            {
+                if (mine.position == cell)
+                {
+                    triggered.Add(mine);
+                    break; // one mine can only hit a ship once even if multi-cell
+                }
+            }
+        }
+
+        if (triggered.Count == 0) return;
+
+        int totalDamage = 0;
+        foreach (MineTile mine in triggered)
+        {
+            totalDamage += mine.damage;
+            Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} hit mine at {mine.position} — {mine.damage} damage.");
+        }
+
+        // Remove triggered mines before applying damage so a destroyed ship
+        // doesn't get re-evaluated if something iterates mines again.
+        foreach (MineTile mine in triggered)
+        {
+            match.mines.Remove(mine);
+        }
+
+        // Flat damage: bypasses armor and defenses per spec.
+        ship.currentHealth -= totalDamage;
+        Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} took {totalDamage} total mine damage. HP: {ship.currentHealth}/{ship.maxHealth}");
+
+        if (ship.currentHealth <= 0)
+        {
+            Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} destroyed by mine(s)!");
+            RemoveShip(ship);
+            match.GetPlayer(ship.owner).ships.Remove(ship);
+        }
+    }
+
     // preferredForward is optional: when supplied (currently only by
     // AIActiveScanPlanner, after scoring the four cardinal facings against
     // AIEnemyMemory and fog coverage), the cone uses that direction instead
@@ -357,6 +511,16 @@ public class GridManager : MonoBehaviour
             state.Ship.anchor = state.PreviewAnchor;
             state.Ship.rotationDegrees = state.PreviewRotation;
             PlaceShip(state.Ship, candidateCells[state.Ship]);
+        }
+
+        // Resolve mines for every ship that just moved, after all are placed.
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            // Ship may have been destroyed by an earlier mine this same commit.
+            if (state.Ship.currentHealth > 0)
+            {
+                ResolveMinesFor(state.Ship);
+            }
         }
 
         provisionalMoves.Clear();
@@ -592,6 +756,7 @@ public class GridManager : MonoBehaviour
         ship.anchor = newAnchor;
         ship.rotationDegrees = newRotationDegrees;
         PlaceShip(ship, ship.GetOccupiedCells());
+        ResolveMinesFor(ship);
         return true;
     }
 
@@ -646,7 +811,8 @@ public class GridManager : MonoBehaviour
                 }
             }
         }
-        // Staging's actual actions (mines, planes, repair) aren't built yet.
+        // Staging: mine deployment is player-activated via DeployMine(ship).
+        // Planes and repair are not yet built.
     }
 
 }
