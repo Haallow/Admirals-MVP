@@ -55,12 +55,7 @@ public class FogManager
         foreach (Vector2Int cell in detectedCells)
         {
             fog.MarkActive(cell, FogState.Marked);
-            Debug.Log($"[VISION][NON-PASSIVE][{ShapeLabel(layer)}][{VisionTypeLabel(layer)}] " +
-                      $"ship={ship.shipType} owner={ship.owner} cell={cell} " +
-                      "applied=Marked layer=active");
         }
-
-        LogBlockedCells("NON-PASSIVE", ship, layer, scan.BlockedCells);
 
         // Mine reveal: if an active scan covers a cell that contains an enemy mine,
         // mark it in the scanner's fog. Only active scans reveal mines — passive fog
@@ -115,12 +110,7 @@ public class FogManager
                 foreach (Vector2Int cell in detectedCells)
                 {
                     fog.MarkPassive(cell, result);
-                    Debug.Log($"[VISION][PASSIVE][{ShapeLabel(layer)}][{VisionTypeLabel(layer)}] " +
-                              $"ship={ship.shipType} owner={ship.owner} cell={cell} " +
-                              $"applied={result} layer=passive");
                 }
-
-                LogBlockedCells("PASSIVE", ship, layer, scan.BlockedCells);
             }
         }
 
@@ -150,25 +140,7 @@ public class FogManager
             foreach (Vector2Int cell in detectedCells)
             {
                 fog.MarkPassive(cell, result);
-                Debug.Log($"[VISION][PASSIVE][{ShapeLabel(layer)}][{VisionTypeLabel(layer)}] " +
-                          $"plane owner={plane.owner} cell={cell} " +
-                          $"applied={result} layer=passive");
             }
-        }
-    }
-
-    private static void LogBlockedCells(
-        string activation,
-        ShipInstance ship,
-        VisionLayer layer,
-        Dictionary<Vector2Int, Vector2Int> blockedCells)
-    {
-        foreach (KeyValuePair<Vector2Int, Vector2Int> blocked in blockedCells)
-        {
-            Debug.Log(
-                $"[VISION][{activation}][{ShapeLabel(layer)}][{VisionTypeLabel(layer)}] " +
-                $"ship={ship.shipType} owner={ship.owner} cell={blocked.Key} " +
-                $"result=BLOCKED blocker={blocked.Value}");
         }
     }
 

@@ -94,11 +94,6 @@ public class TestShipController : MonoBehaviour
                         currentPlaneIndex = 0;
                         currentShipIndex = 0;
                         selectedWeaponIndex = 0;
-                        Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
-                    }
-                    else
-                    {
-                        Debug.Log($"Switched to plane {currentPlaneIndex}");
                     }
                 }
                 else
@@ -112,20 +107,17 @@ public class TestShipController : MonoBehaviour
                             isControllingPlane = true;
                             currentPlaneIndex = 0;
                             currentShipIndex = Mathf.Min(currentShipIndex, myShips.Count - 1);
-                            Debug.Log($"Switched to plane {currentPlaneIndex}");
                         }
                         else
                         {
                             // No planes — wrap to first ship.
                             currentShipIndex = 0;
                             selectedWeaponIndex = 0;
-                            Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
                         }
                     }
                     else
                     {
                         selectedWeaponIndex = 0;
-                        Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
                     }
                 }
             }
@@ -135,7 +127,6 @@ public class TestShipController : MonoBehaviour
                 currentShipIndex = (currentShipIndex + 1) % myShips.Count;
                 selectedWeaponIndex = 0;
                 isControllingPlane = false;
-                Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
             }
         }
 
@@ -149,7 +140,6 @@ public class TestShipController : MonoBehaviour
                 : DomainType.Surface;
 
             Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
-            ship.LogStatBlock($"{ship.shipType} [PlayerA] after domain toggle");
         }
 
         if (ship.owner != turnManager.CurrentPlayer)
@@ -225,14 +215,7 @@ public class TestShipController : MonoBehaviour
         if (direction != Vector2Int.zero)
         {
             Vector2Int candidateAnchor = GetPreviewAnchor(ship) + direction;
-            if (!gridManager.PreviewMove(ship, candidateAnchor, GetPreviewRotation(ship)))
-            {
-                Debug.Log($"Move preview rejected at {candidateAnchor}; the ship remains at its last valid preview.");
-            }
-            else
-            {
-                Debug.Log($"Previewed move to {candidateAnchor}");
-            }
+            gridManager.PreviewMove(ship, candidateAnchor, GetPreviewRotation(ship));
         }
 
         int rotationDelta = 0;
@@ -242,14 +225,7 @@ public class TestShipController : MonoBehaviour
         if (rotationDelta != 0)
         {
             int candidateRotation = ((GetPreviewRotation(ship) + rotationDelta) % 360 + 360) % 360;
-            if (!gridManager.PreviewMove(ship, GetPreviewAnchor(ship), candidateRotation))
-            {
-                Debug.Log($"Rotation preview rejected at {candidateRotation}; the ship remains at its last valid preview.");
-            }
-            else
-            {
-                Debug.Log($"Previewed rotation to {candidateRotation}");
-            }
+            gridManager.PreviewMove(ship, GetPreviewAnchor(ship), candidateRotation);
         }
     }
 
@@ -279,23 +255,15 @@ public class TestShipController : MonoBehaviour
         if (currentCell != lastDragCell)
         {
             lastDragCell = currentCell;
-            if (!gridManager.PreviewMove(
-                    ship,
-                    currentCell,
-                    GetPreviewRotation(ship)))
-            {
-                Debug.Log($"Pointer move preview rejected at {currentCell}; the ship remains at its last valid preview.");
-            }
-            else
-            {
-                Debug.Log($"Pointer-previewed move to {currentCell}");
-            }
+            gridManager.PreviewMove(
+                ship,
+                currentCell,
+                GetPreviewRotation(ship));
         }
 
         if (Input.GetMouseButtonUp(0))
         {
             isDraggingMovement = false;
-            Debug.Log("Pointer movement released; provisional movement remains unconfirmed.");
         }
     }
 
@@ -366,19 +334,13 @@ public class TestShipController : MonoBehaviour
         if (direction != Vector2Int.zero)
         {
             Vector2Int candidate = plane.position + direction;
-            if (gridManager.PreviewPlaneMove(plane, candidate))
-            {
-                Debug.Log($"[PLANE] Previewed plane move to {candidate}.");
-            }
+            gridManager.PreviewPlaneMove(plane, candidate);
         }
 
         if (Input.GetMouseButtonDown(0))
         {
             Vector2Int clickedCell = GetMouseGridCell();
-            if (gridManager.PreviewPlaneMove(plane, clickedCell))
-            {
-                Debug.Log($"[PLANE] Plane moved to clicked cell {clickedCell}.");
-            }
+            gridManager.PreviewPlaneMove(plane, clickedCell);
         }
     }
 

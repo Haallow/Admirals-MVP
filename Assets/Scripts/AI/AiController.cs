@@ -166,8 +166,5 @@ public class AIController : MonoBehaviour
 
     private void LogTurnContext(AITurnContext context)
     {
-        Debug.Log($"[AI][Context] {context.MyShips.Count} living ship(s) of mine, "
-            + $"{context.EnemyShips.Count} living enemy ship(s), "
-            + $"{context.KnownEnemies.Count} of those currently known to my fog.");
     }
 }

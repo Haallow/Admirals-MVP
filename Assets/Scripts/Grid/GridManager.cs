@@ -960,7 +960,6 @@ public class GridManager : MonoBehaviour
                     if (plane.owner != actingPlayer) continue;
 
                     plane.fuelRemaining--;
-                    Debug.Log($"[PLANE] {plane.owner} plane at {plane.position} fuel: {plane.fuelRemaining}");
 
                     if (plane.fuelRemaining <= 0)
                     {
