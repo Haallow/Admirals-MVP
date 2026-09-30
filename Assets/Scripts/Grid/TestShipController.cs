@@ -100,6 +100,11 @@ public class TestShipController : MonoBehaviour
                         currentPlaneIndex = 0;
                         currentShipIndex = 0;
                         selectedWeaponIndex = 0;
+                        Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                    }
+                    else
+                    {
+                        Debug.Log($"Switched to plane {currentPlaneIndex}");
                     }
                 }
                 else
@@ -113,17 +118,20 @@ public class TestShipController : MonoBehaviour
                             isControllingPlane = true;
                             currentPlaneIndex = 0;
                             currentShipIndex = Mathf.Min(currentShipIndex, myShips.Count - 1);
+                            Debug.Log($"Switched to plane {currentPlaneIndex}");
                         }
                         else
                         {
                             // No planes — wrap to first ship.
                             currentShipIndex = 0;
                             selectedWeaponIndex = 0;
+                            Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
                         }
                     }
                     else
                     {
                         selectedWeaponIndex = 0;
+                        Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
                     }
                 }
             }
@@ -133,6 +141,7 @@ public class TestShipController : MonoBehaviour
                 currentShipIndex = (currentShipIndex + 1) % myShips.Count;
                 selectedWeaponIndex = 0;
                 isControllingPlane = false;
+                Debug.Log($"Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
             }
         }
 
@@ -360,7 +369,7 @@ public class TestShipController : MonoBehaviour
             }
             else
             {
-                Debug.Log("Selected ship has no non-passive cone scan.");
+                Debug.Log("Active scan activation rejected (fleet scan already used this phase, wrong phase, or no cone layer).");
             }
         }
 

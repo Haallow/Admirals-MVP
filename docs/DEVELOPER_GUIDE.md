@@ -729,6 +729,7 @@ requires explicit player input:
 Player presses S during Search
   → GridManager.ActivateActiveScan(ship)
       → rejected if phase is not Search
+      → rejected if fleet already scanned this phase (fleetScannedThisPhase)
       → finds the ship's first non-passive Cone layer
       → creates ActiveScanPreviewState (bow, forward)
 
@@ -739,9 +740,11 @@ Player presses Q / E
 Player presses Enter
   → GridManager.ConfirmActiveScan()
       → rejected if phase is not Search
+      → rejected if fleet already scanned this phase
       → FogManager.RunActiveSearch(ship, layer, bow, forward, match)
       → MarkActive(cell, Marked) for each detected cell
       → clears ActiveScanPreviewState
+      → sets fleetScannedThisPhase = true (fleet scan limit: 1)
 
 Player presses Escape / C
   → GridManager.CancelActiveScan()
@@ -751,13 +754,18 @@ Player presses Escape / C
 Active scans deliberately write `Marked` even if the layer's definition says
 `Absolute`; the rule is that active search reveals presence, not identity.
 
-`activeScanPreview` is cleared at phase transitions: entering `Search` and entering `End`.
+Fleet scan limit: exactly one confirmed active scan per player per Search phase.
+Once any ship in the fleet confirms an active scan, no further active scans can be
+activated until the player's next Search phase.
+
+`activeScanPreview` and `fleetScannedThisPhase` are cleared at phase transitions: entering `Search` and entering `End`.
 
 ```text
 Phase.End
   → GridManager.HandlePhaseChanged(End)
   → FogManager.ClearAllActiveMarks()
   → activeScanPreview = null
+  → fleetScannedThisPhase = false
 ```
 
 ### `VisionResolver` geometry
@@ -1048,7 +1056,7 @@ Active scanning does not run automatically on Search; it requires player input.
 Player presses S during Search
   → TestShipController.HandleActiveScanInput
   → GridManager.ActivateActiveScan(selectedShip)
-      → rejected if not Search phase
+      → rejected if not Search phase or fleet already scanned this phase
   → VisionResolver.GetBowAndFacing → derives bow and forward
   → ActiveScanPreviewState created (ship, layer, bow, forward)
   → GridView.DrawDebugCones renders the cone preview each frame
@@ -1060,11 +1068,12 @@ Player presses Q or E
 
 Player presses Enter
   → GridManager.ConfirmActiveScan()
-      → rejected if not Search phase
+      → rejected if not Search phase or fleet already scanned this phase
   → FogManager.RunActiveSearch(ship, layer, bow, forward, match)
   → VisionResolver.GetScanResult builds cone, checks LOS per enemy cell
   → MarkActive(cell, Marked) for each unblocked detected cell
   → ActiveScanPreviewState cleared
+  → fleetScannedThisPhase set to true (no more active scans this turn)
 ```
 
 Active marks remain through Battle and are cleared at End.

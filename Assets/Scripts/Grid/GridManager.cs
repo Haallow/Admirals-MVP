@@ -18,6 +18,8 @@ public class GridManager : MonoBehaviour
     private Dictionary<ShipInstance, ProvisionalMovementState> provisionalMoves =
         new Dictionary<ShipInstance, ProvisionalMovementState>();
     private ActiveScanPreviewState activeScanPreview;
+    // Fleet active scan limit: at most one confirmed active scan per player per Search phase.
+    private bool fleetScannedThisPhase = false;
 
     public float CellSize => cellSize;
 
@@ -510,6 +512,13 @@ public class GridManager : MonoBehaviour
             return false;
         }
 
+        // Fleet scan limit: once any ship has confirmed a scan this Search phase, no other ship can scan.
+        if (fleetScannedThisPhase)
+        {
+            Debug.Log($"[Scan] {ship.owner} has already performed an active scan this Search phase (fleet scan limit: 1).");
+            return false;
+        }
+
         VisionLayer layer = null;
         foreach (VisionLayer candidate in ship.visionLayers)
         {
@@ -560,6 +569,11 @@ public class GridManager : MonoBehaviour
             return false;
         }
 
+        if (fleetScannedThisPhase)
+        {
+            return false;
+        }
+
         Fog.RunActiveSearch(
             activeScanPreview.Ship,
             activeScanPreview.Layer,
@@ -567,6 +581,7 @@ public class GridManager : MonoBehaviour
             activeScanPreview.Forward,
             match);
         activeScanPreview = null;
+        fleetScannedThisPhase = true;
         return true;
     }
 
@@ -912,11 +927,13 @@ public class GridManager : MonoBehaviour
             // Passive vision remains automatic; active scans require player activation.
             Fog.RecomputeAllPassive(match);
             activeScanPreview = null;
+            fleetScannedThisPhase = false;
         }
         else if (newPhase == Phase.End)
         {
             Fog.ClearAllActiveMarks();
             activeScanPreview = null;
+            fleetScannedThisPhase = false;
 
             // Tick recharge for the acting player's living ships only.
             // Opposing ships tick at the end of their own player's turn.

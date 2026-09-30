@@ -8,27 +8,31 @@ update pass.
 
 ---
 
-## [Revert Multi-Ship Active Scan & Submarine Domain Phase Gate]
+## [Revert Multi-Ship Active Scan, Fleet Scan Limit (1 per turn), & Submarine Domain Gate]
 
 **Summary:**
 Reverted multi-ship concurrent active scan preview system back to the single-ship
 scan model per project design. Single `activeScanPreview` state restored in
 `GridManager`, with `ActiveScanPreview` property and zero-parameter scan methods
 (`RotateActiveScan`, `ConfirmActiveScan`, `CancelActiveScan`). `GridView.DrawDebugCones`
-renders the single preview cone. `TestShipController` updated to manual single-ship
-scanning with Space auto-confirm during Search phase. `AIActiveScanPlanner` updated to
-call parameterless `ConfirmActiveScan()`. Also enforced WolfClass submarine domain
-toggle gate so domain (Surface/SubSurface) can only be toggled during Move phase when
-the submarine is the active ship.
+renders the single preview cone.
+Enforced **Fleet Active Scan Limit = 1 per player per Search phase**: once any ship in
+the fleet confirms an active scan, no further active scans can be initiated for that player
+until their next Search phase.
+`TestShipController` updated with fleet scan rejection and Space auto-confirm during Search phase.
+`AIActiveScanPlanner` updated to evaluate all living ships and select the single highest-scoring
+ship and facing to execute the AI's 1 fleet scan per turn.
+Also enforced WolfClass submarine domain toggle gate so domain (Surface/SubSurface) can only
+be toggled during Move phase when the submarine is the active ship.
 
 **Modified files:**
-- `Assets/Scripts/Grid/GridManager.cs` — revert activeScanPreviews dictionary and shipsScannedThisPhase to single activeScanPreview
+- `Assets/Scripts/Grid/GridManager.cs` — revert activeScanPreviews dict to single activeScanPreview, add fleetScannedThisPhase (1 scan per fleet per Search phase)
 - `Assets/Scripts/Grid/GridView.cs` — revert DrawDebugCones to single ActiveScanPreview
-- `Assets/Scripts/Grid/TestShipController.cs` — revert active scan calls, restore Space auto-confirm, gate WolfClass domain toggle to Move phase
-- `Assets/Scripts/AI/Aiactivescanner.cs` — update ConfirmActiveScan() call
-- `docs/DEVELOPER_GUIDE.md` — update active scan flow and method signatures
+- `Assets/Scripts/Grid/TestShipController.cs` — revert active scan calls, restore Space auto-confirm, gate WolfClass domain toggle to Move phase, restore Tab switch logs
+- `Assets/Scripts/AI/Aiactivescanner.cs` — select single best ship for fleet active scan limit
+- `docs/DEVELOPER_GUIDE.md` — update active scan flow, method signatures, and fleet scan limit
 - `docs/Implementation_Status_And_Cleanup_Audit.md` — restore Enter confirms in active scan notes
-- `docs/CHANGELOG.md` — record reversion entry
+- `docs/CHANGELOG.md` — record reversion and fleet scan limit entry
 
 ---
 
