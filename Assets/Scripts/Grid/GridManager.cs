@@ -244,7 +244,9 @@ public class GridManager : MonoBehaviour
         for (int i = 0; i < ship.mines.Count; i++)
         {
             ChargeState candidate = i < ship.mineCharges.Count ? ship.mineCharges[i] : null;
-            if (candidate != null && candidate.IsReady)
+            // Check remaining > 0 directly — recharge only replenishes spent mines,
+            // it does not lock mines that are physically still in storage.
+            if (candidate != null && candidate.remaining > 0)
             {
                 mineCharge = candidate;
                 mineProfile = ship.mines[i];
@@ -254,7 +256,7 @@ public class GridManager : MonoBehaviour
 
         if (mineCharge == null || mineProfile == null)
         {
-            Debug.Log($"[MINE] Deploy rejected: {ship.shipType} has no mines remaining.");
+            Debug.Log($"[MINE] Deploy rejected: {ship.shipType} has no mines in storage.");
             return false;
         }
 

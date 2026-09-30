@@ -8,6 +8,39 @@ update pass.
 
 ---
 
+## [Mine Recharge Fix — deploy from storage regardless of recharge timer]
+
+**Summary:**
+`DeployMine` previously used `ChargeState.IsReady` to find a mine charge,
+which requires `turnsUntilRecharge == 0`. This blocked deployment even when
+`remaining > 0` (mines physically in storage). Fixed to check `remaining > 0`
+directly — the recharge timer only governs replenishment of spent mines, not
+the ability to deploy mines already in storage.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridManager.cs` — `DeployMine` charge lookup changed from `IsReady` to `remaining > 0`; rejection log updated to "no mines in storage"
+
+---
+
+## [Mine Recharge — 1 mine per 2 turns, cap 2]
+
+**Summary:**
+Mines now recharge. `ChargeState` gains `maxCapacity` and a `Recharge()` method
+that increments `remaining` up to the cap. `MineProfile` gains `rechargeTime`.
+`ShipInstance.TickRecharge` extended to loop `mineCharges`: decrements
+`turnsUntilRecharge` and calls `Recharge()` when it hits 0. SwordFish Contact
+Mine set to `rechargeTime: 2`, `count: 2`. Deploying a mine sets
+`turnsUntilRecharge = rechargeTime` on the charge.
+
+**Modified files:**
+- `Assets/Scripts/Combat/ChargeState.cs` — added `maxCapacity`, `Recharge()`, updated constructor
+- `Assets/Scripts/Combat/MineProfile.cs` — added `rechargeTime` field and constructor parameter
+- `Assets/Scripts/Ships/ShipInstance.cs` — `InitializeCharges` passes `maxCapacity` to mine charges; `TickRecharge` extended to loop `mineCharges` and call `Recharge()` on tick-to-zero
+- `Assets/Scripts/Ships/ShipData.cs` — SwordFish Contact Mine updated to `rechargeTime: 2`
+- `Assets/Scripts/Grid/GridManager.cs` — `DeployMine` sets `mineCharge.turnsUntilRecharge` after spend; log includes recharge countdown
+
+---
+
 ## [Mines — SwordFish Staging action]
 
 **Summary:**
