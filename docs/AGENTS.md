@@ -227,7 +227,7 @@ Fog is implemented as layered knowledge:
 - `Marked`: detected cell, type not necessarily known.
 - `Identified`: absolute vision revealed cell contents.
 
-The current implementation treats both `Marked` and `Identified` as known for attack gating, but `FogGrid.Upgrade` preserves the strongest value when multiple layers overlap.
+The current implementation treats both `Marked` and `Identified` as known for attack gating, but `FogGrid.Upgrade` preserves the strongest value when multiple layers overlap. `GridView` visually distinguishes these: `Identified` renders the solid red enemy ship cells inside absolute vision, `Marked` renders a light orange tile contact indicator without drawing the enemy ship cube, and `Unknown` leaves enemy units un-rendered in fog. An Inspector toggle (`revealAllInFog`) allows developers to reveal all units during testing.
 
 Passive detection is rebuilt on every `Search`; active marks are temporary and
 cleared at `End`.

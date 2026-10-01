@@ -8,6 +8,85 @@ update pass.
 
 ---
 
+## [Clear Marked Orange Contact on Ship Destruction]
+
+**Summary:**
+Configured automatic fog mark cleanup when a ship is destroyed in combat or from mine detonations:
+- When a ship's health reaches 0, its occupied cells are immediately removed from both passive and active fog dictionaries via `FogManager.ClearMarksForShip(target)`.
+- Eliminates lingering light orange sensor contact markers (`DrawSensorContact`) on tiles after the occupant ship has been sunk.
+- In `GridView.cs`, defensively added an occupant health check (`tile.Occupant.currentHealth <= 0`) to prevent any rendered artifacts on the death frame.
+
+**Modified files:**
+- `Assets/Scripts/FogOfWar/FogGrid.cs` — added `ClearCell(Vector2Int)` and `ClearCells(IEnumerable<Vector2Int>)`
+- `Assets/Scripts/FogOfWar/FogManager.cs` — added `ClearMarksForShip(ShipInstance)` and `ClearMarksForCells(IEnumerable<Vector2Int>)`
+- `Assets/Scripts/Combat/CombatResolver.cs` — called `gridManager.Fog?.ClearMarksForShip(target)` upon ship destruction
+- `Assets/Scripts/Grid/GridManager.cs` — called `Fog?.ClearMarksForShip(ship)` upon mine destruction in `ResolveMinesFor`
+- `Assets/Scripts/Grid/GridView.cs` — defensively skipped destroyed ship occupants in tile rendering loop
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Fix Enemy Ship Movement Flash in Fog]
+
+**Summary:**
+Identified and resolved the root cause of enemy ships flashing in the fog during their Move phase:
+- **Root Cause**: When the turn phase transitioned to `Phase.Move` for Player B (AI), `GridManager.HandlePhaseChanged` populated `provisionalMoves` with Player B's ships. In `GridView.DrawProvisionalShips()`, all provisional ships were unconditionally rendered with a red cube and white wireframe without checking owner or fog state. Once the Move phase ended or confirmed, `provisionalMoves` was cleared and the ships disappeared from view, creating a visual flash.
+- **Fix in `GridView.cs`**:
+  - `DrawProvisionalShips()` now skips any ship that does not belong to `PlayerId.PlayerA` unless `revealAllInFog` is active.
+  - `HasProvisionalPreview()` returns `false` for enemy ships unless `revealAllInFog` is active, ensuring enemy ships on tiles are solely rendered via the fog-gated main loop.
+- **Fix in `GridManager.cs`**:
+  - `HandlePhaseChanged` now only creates and confirms `provisionalMoves` when `turnManager.CurrentPlayer == PlayerId.PlayerA`. Player B (AI) moves authoritatively via `MoveShip` and does not use provisional drafts.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridView.cs` — filtered enemy ships in `HasProvisionalPreview` and `DrawProvisionalShips`
+- `Assets/Scripts/Grid/GridManager.cs` — gated provisional movement snapshot and confirmation to Player A
+- `docs/CHANGELOG.md` — recorded this bugfix
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Active Search Sonar Domain Updated to Both]
+
+**Summary:**
+Updated the target domain for `Active Search Sonar` across surface ships (`AthenaClass`, `CruiserClass`, `CarrierClass`) from `DomainType.SubSurface` to `DomainType.Both`:
+- Active search sonar scans now detect both `Surface` and `SubSurface` enemy vessels.
+- All sonar layers preserve their original `visionType` (`VisionType.Sensor`), ensuring active scans mark detected contacts (`FogState.Marked`) with the light orange indicator rather than identifying them.
+- `WolfClass` submarine and `SwordFishClass` already had `DomainType.Both` configured.
+
+**Modified files:**
+- `Assets/Scripts/Ships/ShipData.cs` — updated `Active Search Sonar` detects domain to `DomainType.Both` for `AthenaClass`, `CruiserClass`, and `CarrierClass`
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Fog of War Visuals: Absolute vs Sensor Vision & Inspector Toggle]
+
+**Summary:**
+Resolved the "Red Cube Fog Trap" by conditionally rendering enemy units and sensor contacts according to Player A's Fog of War knowledge (`FogState`):
+- **Absolute Vision (`Identified`)**: Draws all things that are inside absolute vision. Specifically draws the enemy ship cells inside absolute vision as solid red cubes (`Color.red`).
+- **Sensor Type Vision (`Marked`)**: Marks the detected tile with a light orange contact indicator (`sensorMarkedColor`) with a golden wireframe highlight to visually indicate that something is present while keeping the identity unknown. The red enemy ship cube is not drawn.
+- **Hidden / Fog (`Unknown`)**: Enemy ships, mines, and planes in unrevealed cells are not drawn at all, preventing players from clicking unknown targets.
+- **Inspector Toggle (`revealAllInFog`)**: Added a serialized boolean on `GridView` (with `sensorMarkedColor`) allowing developers to toggle fog culling off during development/debugging (and automatically enabled when outside Play mode).
+- **Mines & Planes**: Enemy mines and planes now respect fog visibility rules, only displaying when known or when `revealAllInFog` is active. Scanned enemy mines render via the light orange sensor contact marker.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridView.cs` — added `revealAllInFog`, `sensorMarkedColor`, `DrawSensorContact`, and updated `OnDrawGizmos`, `DrawMines`, and `DrawPlanes`
+- `docs/DEVELOPER_GUIDE.md` — documented visual differentiation between Identified, Marked, and Unknown states
+- `docs/AGENTS.md` — documented GridView fog rendering and dev toggle
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
 
 ## [Mouse Drag & Click Rotation for Active Scan]
 

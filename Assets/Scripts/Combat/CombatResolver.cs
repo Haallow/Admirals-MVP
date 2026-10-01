@@ -102,6 +102,8 @@ public class CombatResolver
         if (target.currentHealth <= 0)
         {
             Debug.Log($"{target.owner}'s ship destroyed!");
+            // Clears passive and active fog marks for this ship so destroyed targets don't retain ghost contact markers.
+            gridManager.Fog?.ClearMarksForShip(target);
             gridManager.RemoveShip(target);
             gridManager.Match.GetPlayer(target.owner).ships.Remove(target);
         }

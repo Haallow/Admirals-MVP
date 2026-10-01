@@ -489,6 +489,8 @@ public class GridManager : MonoBehaviour
         if (ship.currentHealth <= 0)
         {
             Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} destroyed by mine(s)!");
+            // Clears passive and active fog marks for this ship so destroyed targets don't retain ghost contact markers.
+            Fog?.ClearMarksForShip(ship);
             RemoveShip(ship);
             match.GetPlayer(ship.owner).ships.Remove(ship);
         }
@@ -827,15 +829,16 @@ public class GridManager : MonoBehaviour
         if (newPhase == Phase.Move)
         {
             provisionalMoves.Clear();
-            if (match != null)
+            if (match != null && turnManager.CurrentPlayer == PlayerId.PlayerA)
             {
-                foreach (ShipInstance ship in turnManager.CurrentPlayer == PlayerId.PlayerA
-                    ? match.playerA.ships
-                    : match.playerB.ships)
+                foreach (ShipInstance ship in match.playerA.ships)
                 {
                     provisionalMoves[ship] = new ProvisionalMovementState(ship);
                 }
+            }
 
+            if (match != null)
+            {
                 // Snapshot plane positions for movement range validation.
                 PlayerId actingPlayer = turnManager.CurrentPlayer;
                 foreach (PlaneUnit plane in match.planes)
@@ -849,9 +852,12 @@ public class GridManager : MonoBehaviour
         }
         else if (newPhase == Phase.Staging)
         {
-            if (!ConfirmProvisionalMovement())
+            if (turnManager.CurrentPlayer == PlayerId.PlayerA)
             {
-                Debug.LogWarning("Provisional movement confirmation failed; no ships were moved.");
+                if (!ConfirmProvisionalMovement())
+                {
+                    Debug.LogWarning("Provisional movement confirmation failed; no ships were moved.");
+                }
             }
         }
         else if (newPhase == Phase.Search)

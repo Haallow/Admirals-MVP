@@ -12,6 +12,22 @@ public class FogGrid
     public void ResetPassive() { passive.Clear(); }
     public void ClearActiveMarks() { active.Clear(); }
 
+    public void ClearCell(Vector2Int pos)
+    {
+        passive.Remove(pos);
+        active.Remove(pos);
+    }
+
+    public void ClearCells(IEnumerable<Vector2Int> cells)
+    {
+        if (cells == null) return;
+        foreach (Vector2Int pos in cells)
+        {
+            passive.Remove(pos);
+            active.Remove(pos);
+        }
+    }
+
     public void MarkPassive(Vector2Int pos, FogState state) { Upgrade(passive, pos, state); }
     public void MarkActive(Vector2Int pos, FogState state) { Upgrade(active, pos, state); }
 

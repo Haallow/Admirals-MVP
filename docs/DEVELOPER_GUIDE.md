@@ -650,9 +650,12 @@ card definition independent from one particular match's remaining ammunition.
 | `Marked` | A sensor has detected an enemy cell, but the ship identity/type is not revealed. |
 | `Identified` | An absolute vision layer has detected the cell and identifies its contents according to the milestone's model. |
 
-The current attack gate treats both `Marked` and `Identified` as known. No
-consumer currently behaves differently based on the two states beyond how they
-are produced.
+The current attack gate treats both `Marked` and `Identified` as known. `GridView`
+visualizes these states distinctly:
+- `Identified` (Absolute vision): draws the enemy ship cells inside absolute vision in solid red (`Color.red`).
+- `Marked` (Sensor vision): marks the tile with a light orange contact indicator (`sensorMarkedColor`) to visually tell that something is there while keeping the identity unknown; the red enemy ship cube is not drawn.
+- `Unknown`: enemy ships, mines, and planes remain hidden in fog.
+A serialized `revealAllInFog` toggle in `GridView` allows bypassing fog culling in the Scene view for development.
 
 ### Passive detection
 

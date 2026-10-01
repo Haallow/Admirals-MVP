@@ -235,7 +235,7 @@ public static class ShipData
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
                 range: 2,
-                detects: DomainType.SubSurface,
+                detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
             )
@@ -327,10 +327,10 @@ public static class ShipData
         ship.visionLayers = new List<VisionLayer>
         {
             new VisionLayer(
-                id: "Passive Radar & Sonar Array",
+                id: "Passive Radar",
                 shape: ShapeType.Halo,
                 range: 2,
-                detects: DomainType.Both,
+                detects: DomainType.Surface,
                 visionType: VisionType.Absolute,
                 isPassive: true
             ),
@@ -339,7 +339,7 @@ public static class ShipData
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
                 range: 5,
-                detects: DomainType.SubSurface,
+                detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
             )
@@ -456,7 +456,7 @@ public static class ShipData
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
                 range: 5,
-                detects: DomainType.SubSurface,
+                detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
             )
@@ -549,7 +549,7 @@ public static class ShipData
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
                 range: 2,
-                detects: DomainType.SubSurface,
+                detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
             )
