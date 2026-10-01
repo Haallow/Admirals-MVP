@@ -705,21 +705,8 @@ public class GridManager : MonoBehaviour
             }
         }
 
-        // One-tile exclusion zone: collect all other ships' current preview
-        // cells so ships moving on the same turn cannot crowd each other.
-        var otherProvisionalCells = new List<Vector2Int>();
-        foreach (ProvisionalMovementState otherState in provisionalMoves.Values)
-        {
-            if (otherState.Ship == ship) continue;
-            otherProvisionalCells.AddRange(otherState.GetPreviewCells());
-        }
-
-        if (!HasClearExclusionZone(candidateCells, ship, otherProvisionalCells, checkCommittedTiles: false))
-        {
-            return false;
-        }
-
         return true;
+
     }
 
     private bool IsValidConfirmationFootprint(ProvisionalMovementState state)
@@ -740,22 +727,9 @@ public class GridManager : MonoBehaviour
             }
         }
 
-        // One-tile exclusion zone at confirmation: collect all other ships'
-        // preview cells so ships cannot end their moves adjacent to each other.
-        var otherConfirmedCells = new List<Vector2Int>();
-        foreach (ProvisionalMovementState otherState in provisionalMoves.Values)
-        {
-            if (otherState.Ship == state.Ship) continue;
-            otherConfirmedCells.AddRange(otherState.GetPreviewCells());
-        }
-
-        if (!HasClearExclusionZone(state.GetPreviewCells(), state.Ship, otherConfirmedCells, checkCommittedTiles: false))
-        {
-            return false;
-        }
-
         return true;
     }
+
 
     public void PlaceShip(ShipInstance ship, List<Vector2Int> cells)
     {
@@ -781,58 +755,6 @@ public class GridManager : MonoBehaviour
         }
     }
 
-    // Returns true when none of the candidate cells are within Chebyshev
-    // distance 1 of any occupied cell belonging to a different ship.
-    // excludeShip is the ship being placed/moved â€” it is never checked
-    // against itself, which allows the ship to overlap its own current cells
-    // during rotation and movement validation.
-    // checkCommittedTiles: when true, also checks the authoritative tile
-    //   dictionary (used by CanPlaceShip for deployment and the AI legacy path).
-    //   When false, only provisionalExcludeCells is checked â€” used by the
-    //   preview and confirmation paths so ships are only blocked by other
-    //   ships' provisional positions, not their committed start-of-phase tiles.
-    // provisionalExcludeCells: other ships' preview footprint cells that have
-    //   not yet been committed to the tile dictionary.
-    private bool HasClearExclusionZone(
-        List<Vector2Int> candidateCells,
-        ShipInstance excludeShip,
-        List<Vector2Int> provisionalExcludeCells = null,
-        bool checkCommittedTiles = true)
-    {
-        foreach (Vector2Int candidate in candidateCells)
-        {
-            if (checkCommittedTiles)
-            {
-                // Check every king-move neighbour in the tile dictionary.
-                for (int dx = -1; dx <= 1; dx++)
-                {
-                    for (int dy = -1; dy <= 1; dy++)
-                    {
-                        Vector2Int neighbour = candidate + new Vector2Int(dx, dy);
-                        Tile tile = GetTile(neighbour);
-                        if (tile == null || tile.Occupant == null) continue;
-                        if (tile.Occupant == excludeShip) continue;
-
-                        return false; // another ship is within 1 tile
-                    }
-                }
-            }
-
-            // Check other ships' provisional preview cells regardless of mode.
-            if (provisionalExcludeCells != null)
-            {
-                foreach (Vector2Int provisionalCell in provisionalExcludeCells)
-                {
-                    if (DistanceBetween(candidate, provisionalCell) <= 1)
-                    {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        return true;
-    }
 
     public bool CanPlaceShip(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
     {
@@ -852,15 +774,9 @@ public class GridManager : MonoBehaviour
             }
         }
 
-        // Enforce one-tile exclusion zone: no candidate cell may be within
-        // Chebyshev distance 1 of any cell belonging to another ship.
-        if (!HasClearExclusionZone(candidateCells, ship))
-        {
-            return false;
-        }
-
         return true;
     }
+
 
     public int DistanceBetween(Vector2Int a, Vector2Int b)
     {

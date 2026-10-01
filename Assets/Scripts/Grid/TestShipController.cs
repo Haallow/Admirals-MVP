@@ -75,6 +75,76 @@ public class TestShipController : MonoBehaviour
         // same as Space — just changes which ship future input targets) ---
         currentShipIndex = Mathf.Min(currentShipIndex, myShips.Count - 1);
 
+        // --- Click-to-select active ship ---
+        // Left-clicking a Player A ship selects it as the active ship.
+        // Pass 1: provisional preview cells (ships that have already been dragged).
+        // Pass 2: tile occupancy, but only when the occupant has NOT been
+        //         provisionally moved away — this lets un-dragged ships be
+        //         selected at their original tile in Move phase while still
+        //         ignoring the vacated anchor cells of already-dragged ships.
+        if (Input.GetMouseButtonDown(0) && Camera.main != null)
+        {
+            Vector2Int clickedCell = GetMouseGridCell();
+            ShipInstance clickedShip = null;
+
+            // Pass 1: provisional preview cells (always checked first).
+            foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+            {
+                if (state.Ship.owner == PlayerId.PlayerA &&
+                    state.GetPreviewCells().Contains(clickedCell))
+                {
+                    clickedShip = state.Ship;
+                    break;
+                }
+            }
+
+            // Pass 2: tile occupancy fallback.
+            // In Move phase only accept the occupant if it has no provisional
+            // state that already moved it away from this cell, so that vacated
+            // anchor cells of dragged ships cannot trigger a selection.
+            if (clickedShip == null)
+            {
+                Tile clickedTile = gridManager.GetTile(clickedCell);
+                if (clickedTile?.Occupant != null &&
+                    clickedTile.Occupant.owner == PlayerId.PlayerA)
+                {
+                    ShipInstance candidate = clickedTile.Occupant;
+                    bool movedAway = false;
+                    if (turnManager.CurrentPhase == Phase.Move)
+                    {
+                        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+                        {
+                            if (state.Ship == candidate &&
+                                !state.GetPreviewCells().Contains(clickedCell))
+                            {
+                                movedAway = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!movedAway)
+                    {
+                        clickedShip = candidate;
+                    }
+                }
+            }
+
+            if (clickedShip != null)
+            {
+                int foundIndex = myShips.IndexOf(clickedShip);
+                if (foundIndex >= 0 && foundIndex != currentShipIndex)
+                {
+                    currentShipIndex = foundIndex;
+                    selectedWeaponIndex = 0;
+                    isControllingPlane = false;
+                    // Cancel any in-progress drag so HandlePointerMovement cannot
+                    // treat this selection click as a drag-start on the new ship.
+                    isDraggingMovement = false;
+                    Debug.Log($"[Click] Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                }
+            }
+        }
+
         if (Input.GetKeyDown(KeyCode.Tab))
         {
             // During Move phase, Tab cycles through ships then planes.
@@ -514,11 +584,20 @@ public class TestShipController : MonoBehaviour
         );
 
         Tile clickedTile = gridManager.GetTile(clickedPos);
-        if (clickedTile == null || clickedTile.Occupant == null || clickedTile.Occupant.owner == ship.owner)
+
+        // Friendly ship — treated as a ship-selection click (handled above in
+        // Update); silently ignore so no misleading log appears.
+        if (clickedTile?.Occupant != null && clickedTile.Occupant.owner == ship.owner)
         {
-            Debug.Log("No valid enemy target at clicked tile.");
             return;
         }
+
+        // Empty tile or out-of-bounds — nothing to attack.
+        if (clickedTile == null || clickedTile.Occupant == null)
+        {
+            return;
+        }
+
 
         // selectedWeaponIndex was already bounds-checked in HandleWeaponSelection,
         // but re-check here too in case the active ship was switched (Tab) after

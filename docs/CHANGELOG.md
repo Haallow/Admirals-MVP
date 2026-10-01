@@ -8,7 +8,26 @@ update pass.
 
 ---
 
+## [Click-to-Select Active Ship]
+
+**Summary:**
+Left-clicking any tile occupied by a Player A ship now selects that ship as the active ship
+(`currentShipIndex`). Works in all phases. Logs `[Click] Switched to ship N: ShipType` to
+the console. Resets `selectedWeaponIndex` to 0 and exits plane-control mode on switch.
+Does not conflict with the existing pointer-drag movement handler, which only initiates a
+drag when the clicked cell is a preview cell of the **currently active** ship — clicking a
+different ship's tile never triggers that path.
+
+**Modified files:**
+- `Assets/Scripts/Grid/TestShipController.cs` — added click-to-select block in `Update()`
+
+**Debt introduced:**
+- None. Feature is additive; no existing behaviour changed.
+
+---
+
 ## [Revert Multi-Ship Active Scan, Fleet Scan Limit (1 per turn), & Submarine Domain Gate]
+
 
 **Summary:**
 Reverted multi-ship concurrent active scan preview system back to the single-ship
