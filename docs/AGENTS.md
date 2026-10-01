@@ -18,21 +18,14 @@ Key implementation status from the current codebase:
 
 Known gaps still present in the prototype:
 
-- `AIController` still targets Player A's first ship using global knowledge.
-- The AI still only controls Player B's first ship.
-- Active scanning is player-activated during Search: `S` opens the selected
-  ship's non-passive cone preview, `Q`/`E` rotate it, and `Escape`/`C` cancels
-  it. Confirmation is handled by the UI layer, not a substitute keyboard
-  shortcut. Passive vision remains automatic.
-- Fog state is runtime-only; there is no player-facing UI.
-- Armor reduction is implemented (`CombatResolver.ApplyArmor`). Defense rolls,
-  recharge, and defense side effects are not yet implemented.
-- Ammo consumption is implemented. Mines are implemented for the SwordFish
-  class (`GridManager.DeployMine`, `MatchState.mines`). Planes and repair ship
-  are not yet built.
+- AI movement execution still uses the legacy `MoveShip` path rather than the provisional movement system (though AI decision planners are modular, fog-aware, and control all living Player B ships).
+- Active scanning operates on a single fleet scan limit per player per Search phase.
+- Fog state is runtime-only; visualization is Gizmo-based (`GridView`).
+- Defense rolls and side effects are not implemented. Armor reduction (`ApplyArmor`), ammo deduction, and mine recharge are implemented.
+- Staging actions: Mines are implemented on `SwordFishClass` (`GridManager.DeployMine`, `MatchState.mines`); Carrier Reconnaissance Planes are implemented on `CarrierClass` (`PlaneProfile`, `PlaneUnit`, `DeployPlane`, `UndeployPlane`, `MatchState.planes`). Repair ship is not yet built.
+- One attack per ship per Battle phase limit is implemented (`ShipInstance.hasAttackedThisPhase`).
 - There is no win-condition/game-over flow.
-- Temporary fog logs and cone-count commands are removed; `GridView` retains
-  the cone and halo Gizmos as planned visualization surfaces.
+- Obsolete Gizmos (`DrawDebugHalos`, `DrawMovementRanges`) have been removed; `GridView` retains active cones, planes, mines, and sensor contacts (`DrawSensorContact`) with a `revealAllInFog` developer toggle.
 
 ## Architecture overview
 
@@ -124,10 +117,8 @@ react without the turn system knowing about fog, ships, or the grid.
   - Reusable map asset containing dimensions and sparse terrain entries.
 - `TerrainType.cs`
   - Explicit normal, costly, and impassable terrain categories.
-- `CombatResolver.cs`
-  - Plain combat service for attack validation (one attack per ship per Battle phase, turn/phase gating, range, fog, LOS), d20 resolution, damage, ammo deduction, and destruction cleanup.
 - `GridView.cs`
-  - Visualization component for board, zone, cone, and halo Gizmos; it reads but does not mutate `GridManager` state.
+  - Visualization component for board, zone, cone, contact marks, mines, planes, and ships; it reads but does not mutate `GridManager` state. Renders `Identified` red ship cubes vs `Marked` orange contact markers; hides enemy units in fog (toggleable via `revealAllInFog`). `DrawDebugHalos` and `DrawMovementRanges` have been removed.
 - `FootprintUtil.cs`
   - Rotation and world-cell math for ship footprints.
 - `Tile.cs`
@@ -168,9 +159,13 @@ react without the turn system knowing about fog, ships, or the grid.
   - Owns both fog grids and recomputes passive/active visibility.
 - `VisionResolver.cs`
   - Stateless geometry and detection rules.
+- `ActiveScanPreviewState.cs`
+  - Encapsulates player active scan cone preview, direction, pivot, and confirmation.
 
 ### `Assets/Scripts/Combat/`
 
+- `CombatResolver.cs`
+  - Plain combat service for attack validation (one attack per ship per Battle phase, turn/phase gating, range, fog, LOS), d20 resolution, armor damage reduction, ammo deduction, and destruction/mark cleanup.
 - `DomainType.cs`
   - `Surface`, `SubSurface`, `Both`.
 - `VisionLayer.cs`
@@ -183,12 +178,27 @@ react without the turn system knowing about fog, ships, or the grid.
   - d20 tier model.
 - `ChargeState.cs`
   - Runtime ammo/use state and recharge metadata.
+- `PlaneProfile.cs` / `PlaneUnit.cs`
+  - Card profile definition and runtime unit for carrier reconnaissance aircraft (launch range, staging-only movement, fuel lifecycle, absolute halo vision).
+- `MineProfile.cs` / `MineTile.cs`
+  - Card profile and runtime contact mine data (deployment in Staging, 600 damage on contact, 2-turn recharge).
 
 ### `Assets/Scripts/AI/`
 
-- `AIController.cs`
-  - Temporary prototype for Player B movement and attack selection.
-  - It is not fog-aware yet and operates only over the current first ship in a limited way.
+- `AiController.cs`
+  - Scene-level AI orchestrator subscribing to `TurnManager.PhaseChanged` for Player B turns.
+- `AiTurnContext.cs`
+  - Captures per-turn snapshot of living AI ships, friendly memory, and fleet active scan usage.
+- `AiEnemyMemory.cs`
+  - Tracks observed enemy positions, turn recency, and predicted locations across turns.
+- `AiActiveScanner.cs`
+  - Selects and executes up to 1 fleet active scan per Search phase using sensor ships.
+- `AIMovementPlanner1.cs`
+  - Plans movement candidates toward observed enemies or board center (legacy debt: executes via `GridManager.MoveShip`).
+- `AIAttackPlanner.cs`
+  - Evaluates and executes legal attacks against known targets respecting `hasAttackedThisPhase`.
+- `AIScoring.cs`
+  - Scoring functions for AI candidate scans, moves, and attacks.
 
 ## Core conventions for agents
 
@@ -270,27 +280,35 @@ cleared at `End`.
 The current authoritative attack flow in `CombatResolver.ResolveAttack` is:
 
 1. Reject dead target (logs reason).
-2. Verify weapon charge readiness (logs reason).
-3. Require target-domain compatibility (logs reason).
-4. Compute minimum Chebyshev distance across all attacker occupied cells ×
-   all target occupied cells. Collect every in-range pair for step 6.
-5. Reject if no cell pair is within weapon range (logs reason).
-6. Check fog knowledge via `IsTargetKnown`.
-7. Check terrain line-of-fire via `HasClearLineOfFire`: the attack is legal
+2. Enforce phase and turn gating: attack must occur in Battle phase during the attacking player's turn.
+3. Enforce single attack limit: attacker must not have already attacked this Battle phase (`attacker.hasAttackedThisPhase == false`).
+4. Verify weapon charge readiness (`IsReady` requires `remaining != 0` and `turnsUntilRecharge == 0`).
+5. Require target-domain compatibility (logs reason).
+6. Compute minimum Chebyshev distance across all attacker occupied cells ×
+   all target occupied cells. Collect every in-range pair for step 8.
+7. Reject if no cell pair is within weapon range (logs reason).
+8. Check fog knowledge via `IsTargetKnown`.
+9. Check terrain line-of-fire via `HasClearLineOfFire`: the attack is legal
    when at least one in-range pair has a clear supercover Bresenham path
    through the grid. Only `Impassable` terrain blocks; `Normal` and `Costly`
    are transparent. Attacker and target endpoint cells are excluded from the
    blocker test. Logs `BLOCKED_LINE_OF_FIRE` with the first blocking cell when
    every pair is blocked.
-8. Roll one d20 and apply `ApplyArmor(rawDamage, target.armor)`:
+10. Roll one d20 and apply `ApplyArmor(rawDamage, target.armor)`:
    `effectiveDamage = round(rawDamage * (1 - armor * 0.0015))`. Miss stays 0;
    non-zero results are clamped to minimum 1. Log shows raw and reduced values.
-9. If health reaches zero, remove the target from grid occupancy and from the
-   owner's live ship list.
+11. Mark attacker as having attacked (`attacker.hasAttackedThisPhase = true`).
+12. Deduct weapon ammo/charge (`weaponCharge.remaining--`, if finite).
+13. If health reaches zero, remove the target from grid occupancy, remove from
+   owner's live ship list, and clear all active/passive sensor contact marks
+   for the sunken ship via `FogManager.ClearMarksForShip(target)`.
 
 Notes:
 
-- Ammo consumption, armor, defenses, and side effects are not implemented yet.
+- Ammo consumption (`weaponCharge.remaining--`), armor reduction (`ApplyArmor`),
+  one-attack-per-ship gating (`hasAttackedThisPhase`), and destroyed ship contact
+  mark cleanup (`ClearMarksForShip`) are fully implemented.
+- Defenses and side effects are defined in data profiles but not yet evaluated during attack resolution.
 - The fog attack gate checks knowledge at the cell level; any one known cell
   on a multi-cell target is sufficient.
 - `ResolveAttack` returns `true` even on a d20 miss, when resolution was
@@ -302,22 +320,14 @@ Notes:
 
 ## AI implementation status
 
-The current `AIController` is intentionally limited:
+The AI has been overhauled into an event-driven system subscribed to `TurnManager.PhaseChanged`:
 
-- It acts once per phase.
-- It uses only the first Player B ship.
-- It moves toward the first Player A ship during `Move`.
-- It selects the best legal weapon by expected value during `Battle`.
-- It does nothing during `Search`.
-- It does not use the AI's own fog grid.
-
-This is prototype behavior, not the target Milestone 5 design. Planned improvements include:
-
-- selecting the nearest known enemy from the AI's own fog view,
-- not chasing or attacking hidden targets,
-- moving toward the map center when no target is known,
-- acting for every living AI ship,
-- using Search to build knowledge.
+- **Event-Driven Execution:** `AiController` listens to `PhaseChanged`. When Player B's turn advances, it executes phase logic without frame polling.
+- **Context & Memory:** Captures a per-turn snapshot in `AiTurnContext` and tracks enemy sightings across turns via `AiEnemyMemory` (marking last known coordinates and aging stale contacts).
+- **Multi-Ship Control:** Operates across all living Player B ships, not just a single hardcoded unit.
+- **Search Phase Active Scanning:** `AiActiveScanner` scores candidate sensor ships and cone orientations, firing up to 1 fleet active scan per Search phase.
+- **Move Phase Positioning:** `AIMovementPlanner1` evaluates movement candidates toward predicted/observed enemy targets or map center if no enemy has been sighted. (Legacy debt: Movement currently executes via `GridManager.MoveShip` Chebyshev steps rather than provisional Dijkstra paths).
+- **Battle Phase Engagement:** `AIAttackPlanner` evaluates legal attacks against known targets in Player B's fog, respects the one-attack-per-phase constraint (`hasAttackedThisPhase`), and selects weapons by expected damage.
 
 ## Deployment and setup
 

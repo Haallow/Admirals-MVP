@@ -1,6 +1,6 @@
 # Admirals — Implementation Status and Code Cleanup Audit
 
-**Date:** 2026-09-24  
+**Date:** 2026-10-01  
 **Unity version:** 6000.5.10f1  
 **Branch:** feature/grid-system  
 **Source authoritative:** Yes — every classification below is verified against the actual source files.
@@ -33,31 +33,36 @@
 | **Grid** | IMPLEMENTED | `GridManager`, `Tile`, `FootprintUtil`, `GridView` | — | Gizmo markers, `DebugRecomputeFog` | Remove `TestShip`/`ObstructionShip` properties, remove `DebugRecomputeFog` |
 | **Terrain** | IMPLEMENTED | `TerrainType`, `Tile.SetTerrain`, `MapDefinition` loads into runtime tiles | Movement terrain cost not consumed by `MoveShip` legacy path | Terrain Gizmo coloring in `GridView` | Replace terrain Gizmos with final art |
 | **MapDefinition** | IMPLEMENTED | `MapDefinition` ScriptableObject, sparse terrain entries, `OnValidate` normalization | No MapDefinition asset in `Assets/Data/` — grid defaults to all Normal | TestMap.asset in `Assets/Scripts/Grid/` | Move map assets to `Assets/Data/` when terrain is used |
-| **Movement** | IMPLEMENTED | Provisional move + Dijkstra (keyboard and pointer/drag); `Space` commits, `Escape`/`C` cancels | Terrain cost not wired into `MoveShip` legacy path used by AI | `MoveShip` legacy Chebyshev method | Remove or retire `MoveShip` after AI migrates to provisional system |
-| **Dijkstra** | IMPLEMENTED | `GridPathfinder.FindPath`, `FindReachableCells`, 8-direction, terrain cost, occupancy | — | Reachable-anchor visualization in `GridView.DrawMovementRanges` | Keep pathfinder; remove or evolve visualization |
+| **Movement** | IMPLEMENTED | Provisional move + Dijkstra (keyboard and pointer/drag); `Space` commits, `Escape`/`C` cancels; reachable-anchor Gizmo removed | Terrain cost not wired into `MoveShip` legacy path used by AI | `MoveShip` legacy Chebyshev method | Remove or retire `MoveShip` after AI migrates to provisional system |
+| **Dijkstra** | IMPLEMENTED | `GridPathfinder.FindPath`, `FindReachableCells`, 8-direction, terrain cost, occupancy | — | — | Keep pathfinder; `GridView.DrawMovementRanges` removed |
 | **Provisional Movement** | IMPLEMENTED | `ProvisionalMovementState`, `GridManager.PreviewMove`, `ConfirmProvisionalMovement`, `CancelProvisionalMovement` | Multi-ship AI use | Provisional footprint Gizmos | Replace Gizmos with production movement UI |
 | **Keyboard Movement** | IMPLEMENTED | Arrow keys preview/commit; `Space` commits and advances; `Q`/`E` rotate | — | All in `TestShipController` (prototype controller) | Replace with production input |
 | **Pointer/Drag Input** | IMPLEMENTED | Click-to-press, drag to grid cell, release holds provisional | — | All in `TestShipController` | Replace with production input |
 | **Ship Rotation** | IMPLEMENTED | `FootprintUtil.RotateOffsets` (0/90/180/270), validated via `CanPlaceShip` | — | `Q`/`E` in `TestShipController` | Replace with production input |
-| **Fog of War** | IMPLEMENTED | `FogManager`, `FogGrid`, `FogState`, `VisionResolver` | Player-facing fog UI | All visualization is Gizmo-only | Replace Gizmos with production fog UI |
-| **Passive Detection** | IMPLEMENTED | Halo and Cone passive layers, Chebyshev hull-cell range, `FogState.Identified`/`Marked`, rebuilt each Search, supercover Bresenham LOS blocks Impassable terrain (Phase 9A) | — | Halo Gizmo (`DrawDebugHalos`) — now uses hull-cell range and full LOS check matching `VisionResolver` | Replace Gizmo with production art |
-| **Active Scanning** | IMPLEMENTED | Player activates with `S`, `Q`/`E` rotate, `Enter` confirms; `ActiveScanPreviewState` + cone Gizmo | Active scan does not iterate all living ships; only the currently selected ship activates | Cone Gizmo (`DrawDebugCones`); active scan via keyboard | Replace with production scan UI |
+| **Fog of War** | IMPLEMENTED | `FogManager`, `FogGrid`, `FogState`, `VisionResolver`, `ActiveScanPreviewState`; Absolute (`Identified`) vs Sensor (`Marked`) visual differentiation, dev `revealAllInFog` toggle, dead-ship mark cleanup (`ClearMarksForShip`) | Player-facing fog UI | All visualization is Gizmo-based | Replace Gizmos with production fog UI |
+| **Passive Detection** | IMPLEMENTED | Halo and Cone passive layers, Chebyshev hull-cell range, `FogState.Identified`/`Marked`, rebuilt each Search, supercover Bresenham LOS blocks Impassable terrain (Phase 9A); plane unit absolute halo vision (range 3, sees over terrain LOS); halo Gizmo (`DrawDebugHalos`) removed | — | — | Keep detection; production fog visualizer |
+| **Active Scanning** | IMPLEMENTED | Player activates with `S`, `Q`/`E` rotate, `Enter` confirms; `ActiveScanPreviewState` + cone Gizmo; fleet limit of 1 active scan per phase enforced; AI also scans via `AiActiveScanner` | Active scan does not iterate all living ships in parallel; 1 scan per fleet per Search phase | Cone Gizmo (`DrawDebugCones`); active scan via keyboard | Replace with production scan UI |
 | **Cone Scanning** | IMPLEMENTED | `VisionResolver.GetConeCells`, supercover LOS per cell, bow-derived forward | — | Cone Gizmo is visualization surface | Replace Gizmo with production scan overlay |
 | **Cone Pivot** | IMPLEMENTED | `ActiveScanPreviewState.Rotate`, `GridManager.RotateActiveScan` | — | `Q`/`E` keys in `TestShipController.HandleActiveScanInput` | Keep logic; replace key bindings |
 | **Vision LOS (Phase 9A)** | IMPLEMENTED | `VisionResolver.TryGetFirstBlockingCell`, supercover Bresenham; `VisionScanResult` captures blocked cells with blocker coords | — | Blocked-cell Gizmo coloring in `DrawDebugCones` | Keep LOS; replace blocked-cell visualization |
-| **Combat — Attack Validation** | IMPLEMENTED | Dead-check, charge-readiness, domain, nearest-cell range, fog gate, all in `CombatResolver.ResolveAttack`; every rejection path logs a specific reason | — | `Debug.Log` on every rejection and outcome | Replace logs with production feedback |
-| **Combat — Attack Resolution** | IMPLEMENTED | d20 `RollWeapon`, tier damage, destroyed-ship cleanup | Armor, defense saves, ammo consumption, recharge, side effects | `Debug.Log` on outcome and destruction | Implement armor/defense later; remove logs |
-| **Combat — Line of Fire** | IMPLEMENTED | `CombatResolver.HasClearLineOfFire` tests every in-range attacker×target cell pair via `VisionResolver.TryGetFirstBlockingCell`; fully-blocked attacks rejected before d20 roll; logs `BLOCKED_LINE_OF_FIRE` with attacker, weapon, target, pair, and first blocker | — | `Debug.Log` on block rejection | Replace log with production feedback |
-| **AI** | PARTIALLY IMPLEMENTED | Moves and attacks for `PlayerB.ships[0]` only; greedy weapon selection; calls `ResolveAttack` | Fog-aware target selection, multi-ship control, center-fallback movement, Search scanning | All of `AIController.cs` | Replace with proper fog-aware AI |
-| **Deployment** | IMPLEMENTED | `DeploymentService.DeployAll`, `CanPlaceShip` validation now present, hardcoded anchors | Player-controlled deployment phase | Hardcoded anchor values | Eventually support player deployment |
-| **Turn Management** | IMPLEMENTED | `TurnManager.AdvancePhase`, five phases, `PhaseChanged` event, player switching at End | — | `LogState` per phase advance | Replace console log with production HUD indicator |
-| **Visualization** | PROTOTYPE / TEMPORARY | All visualization is Gizmo-only in `GridView.OnDrawGizmos` | All production rendering: sprites, UI, HUD | Entire `GridView` is Gizmo-based | Replace entirely with production art + UI |
+| **Combat — Attack Validation** | IMPLEMENTED | Dead-check, charge-readiness, domain, nearest-cell range, fog gate, line of fire, turn/phase gate, and single attack limit per Battle phase (`hasAttackedThisPhase`); every rejection logs reason | — | `Debug.Log` on every rejection and outcome | Replace logs with production feedback |
+| **Combat — Attack Resolution** | IMPLEMENTED | d20 `RollWeapon`, tier damage, armor reduction (`ApplyArmor`), ammo deduction (`remaining--`), destroyed-ship occupancy cleanup, and dead-ship contact mark clearing (`ClearMarksForShip`) | Defense saving throws and side effects execution | `Debug.Log` on outcome and destruction | Implement defenses/side-effects later; remove logs |
+| **Combat — Line of Fire** | IMPLEMENTED | `CombatResolver.HasClearLineOfFire` tests every in-range attacker×target cell pair via `VisionResolver.TryGetFirstBlockingCell`; fully-blocked attacks rejected before d20 roll; logs `BLOCKED_LINE_OF_FIRE` | — | `Debug.Log` on block rejection | Replace log with production feedback |
+| **AI** | IMPLEMENTED (WITH PLANNERS) | Event-driven modular architecture (`AiController`, `AiTurnContext`, `AiEnemyMemory`, `AiActiveScanner`, `AIMovementPlanner1`, `AIAttackPlanner`, `AIScoring`); controls all living Player B ships, fog-aware, 1 fleet active scan per phase, respects `hasAttackedThisPhase` | AI movement provisional migration | Legacy `MoveShip` execution path | Migrate AI movement to provisional Dijkstra |
+| **Deployment** | IMPLEMENTED | `DeploymentService.DeployAll`, `CanPlaceShip` validation present, hardcoded anchors | Player-controlled deployment phase | Hardcoded anchor values | Eventually support player deployment |
+| **Turn Management** | IMPLEMENTED | `TurnManager.AdvancePhase`, five phases, `PhaseChanged` event, player switching at End; Staging handles mine recharge and plane deploy-turn unlock; End decrements plane fuel and clears active marks | Win condition / game-over check | `LogState` per phase advance | Replace console log with production HUD indicator |
+| **Visualization** | PROTOTYPE / TEMPORARY | Gizmo rendering in `GridView.OnDrawGizmos` (starting zones, terrain, sensor contacts, identified ships, provisional previews, cones, mines, planes); `DrawDebugHalos` and `DrawMovementRanges` removed | All production rendering: sprites, UI, HUD | Entire `GridView` is Gizmo-based | Replace entirely with production art + UI |
 | **UI** | PLANNED / NOT IMPLEMENTED | None | Fog/scan toggles, health bars, phase/ship/weapon indicators, movement preview UI | — | Full UI system to be built |
 | **Art / Assets** | PLANNED / NOT IMPLEMENTED | No sprites, textures, prefabs, or models in repository | All production art | — | All art to be added |
 | **Match / Game-Over** | PARTIALLY IMPLEMENTED | Destroyed ships removed from grid and live fleet; no win check | Win-condition/game-over flow | Dead-ship log in `CombatResolver` | Add after core gameplay systems complete |
-| **Staging Actions** | PLANNED / NOT IMPLEMENTED | Phase enum includes `Staging`; `HandlePhaseChanged` processes it but comment notes nothing is built | Mines, planes, repair ship | — | Implement when Milestone 6+ scope is decided |
+| **Staging Actions** | IMPLEMENTED | Contact Mines (`SwordFishClass`, `M` deploy, 600 damage, 2-turn recharge); Reconnaissance Planes (`CarrierClass`, `P` deploy, launch range 4, selectable in Staging, Tab cycle, deploy-turn movement lock, undeploy `C` refunds sortie, fuel tick on End, halo vision range 3) | Repair ship action | Keyboard keys `M`, `P`, `C` in `TestShipController` | Replace keyboard bindings with production UI buttons |
 
-> **Phase 9A and 9B status:** Both are fully implemented. `VisionResolver.TryGetFirstBlockingCell` (supercover Bresenham LOS) gates passive and active fog scans (9A). `CombatResolver.HasClearLineOfFire` reuses the same traversal to gate attacks (9B). `DrawDebugHalos` in `GridView` now also uses hull-cell range and the same LOS check, matching the authoritative detection result.
+> **Current Implementation Highlights:**
+> - **Line of Sight & Fire (Phases 9A/9B):** `VisionResolver.TryGetFirstBlockingCell` gates both fog scans and weapon attacks.
+> - **Combat Complete:** Single attack limit per Battle phase (`hasAttackedThisPhase`), armor calculation (`ApplyArmor`), ammo deduction (`remaining--`), and dead ship mark removal (`ClearMarksForShip`) are all live.
+> - **Fog of War Visual Differentiation:** Solid red enemy ship cubes render only when `Identified` (Absolute vision); sensor detections render as light orange `Marked` contact markers without revealing the ship cube; `revealAllInFog` toggle available for inspection.
+> - **Modular AI:** AI is event-driven (`PhaseChanged`) with dedicated planners for memory, active scanning, movement, and attack.
+> - **Staging Actions:** Contact mines and carrier reconnaissance planes are fully functional in Staging.
 
 ---
 
@@ -106,19 +111,19 @@ Replace terrain Gizmo coloring with final tile art assets. Retire `DrawTerrain` 
 ### 2.3 Movement
 
 **Current implementation:**  
-Provisional movement: `GridManager.PreviewMove` calculates a Dijkstra path, validates the footprint, and stores a `ProvisionalMovementState`. `ConfirmProvisionalMovement` validates all previews together and commits atomically. `CancelProvisionalMovement` discards all previews. Keyboard (arrows/Q/E) and pointer (click-drag) both feed `PreviewMove`. On entering `Move`, `HandlePhaseChanged` snapshots all current-player ships.
+Provisional movement: `GridManager.PreviewMove` calculates a Dijkstra path, validates the footprint, and stores a `ProvisionalMovementState`. `ConfirmProvisionalMovement` validates all previews together and commits atomically. `CancelProvisionalMovement` discards all previews. Keyboard (arrows/Q/E) and pointer (click-drag) both feed `PreviewMove`. On entering `Move`, `HandlePhaseChanged` snapshots all current-player ships. `GridView.DrawMovementRanges` has been removed.
 
 **Legacy movement:**  
-`GridManager.MoveShip` remains — it validates by Chebyshev distance from `anchorAtTurnStart` then calls `CanPlaceShip`. It is used only by `AIController.DecideMove`. It does not use Dijkstra or terrain cost.
+`GridManager.MoveShip` remains — it validates by Chebyshev distance from `anchorAtTurnStart` then calls `CanPlaceShip`. It is used by the AI's `AIMovementPlanner1` execution step. It does not use Dijkstra or terrain cost.
 
 **Missing functionality:**  
-AI does not use the provisional movement system. Richer movement UI (production input, animations).
+AI does not use the provisional movement system yet. Richer movement UI (production input, animations).
 
 **Temporary/prototype functionality:**  
-All player movement input is in `TestShipController`, documented as throwaway. `DrawProvisionalShips` and `DrawMovementRanges` in `GridView` are TEMPORARY-labeled Gizmo visualizations.
+All player movement input is in `TestShipController`, documented as throwaway. `DrawProvisionalShips` in `GridView` is a TEMPORARY-labeled Gizmo visualization (enemy provisional previews are suppressed to prevent fog flashing).
 
 **Future cleanup:**  
-- Migrate `AIController` to provisional system, then retire `MoveShip`.
+- Migrate AI movement to provisional Dijkstra system, then retire `MoveShip`.
 - Replace all Gizmo movement visualization with production UI.
 - Remove `TestShipController` input class when production input replaces it.
 
@@ -127,17 +132,23 @@ All player movement input is in `TestShipController`, documented as throwaway. `
 ### 2.4 Fog of War
 
 **Current implementation:**  
-`FogManager` owns two `FogGrid` instances (one per player). Passive detection is rebuilt from scratch each `Search` phase via `RecomputeAllPassive`. Active scans are player-triggered: the human player presses `S` to activate, `Q`/`E` to rotate, `Enter` to confirm. `VisionResolver` is stateless and handles Halo geometry, Cone geometry, domain filtering, `onlyWhileSurfaced`, dead-ship filtering, and supercover Bresenham LOS. `VisionScanResult` carries detected and blocked cells. Active marks clear at `End`. `FogGrid.GetState` returns the stronger of passive and active layers.
+`FogManager` owns two `FogGrid` instances (one per player). Passive detection is rebuilt from scratch each `Search` phase via `RecomputeAllPassive`. Active scans are player-triggered: the human player presses `S` to activate, `Q`/`E` to rotate, `Enter` to confirm; a fleet limit of 1 active scan per phase is enforced. `VisionResolver` is stateless and handles Halo geometry, Cone geometry, domain filtering, `onlyWhileSurfaced`, dead-ship filtering, and supercover Bresenham LOS. `VisionScanResult` carries detected and blocked cells. Active marks clear at `End`. `FogGrid.GetState` returns the stronger of passive and active layers. Stale contact marks for sunken ships are automatically cleared via `FogManager.ClearMarksForShip`. `DrawDebugHalos` has been removed. Carrier planes provide absolute halo vision (range 3) that sees over terrain LOS.
+
+**Visual Differentiation:**  
+`GridView` visually separates knowledge levels:
+- `Identified` (Absolute vision): Draws solid red enemy ship cubes.
+- `Marked` (Sensor vision): Draws a light orange cube with gold wireframe (`sensorMarkedColor`); the enemy ship cube itself is hidden.
+- `Unknown`: Enemy ships, planes, and mines are completely hidden in fog.
+- An Inspector toggle (`revealAllInFog`) allows developers to reveal all units during testing.
 
 **Missing functionality:**  
-- No player-facing fog UI (no UI at all).
-- Active scan only activates for the currently selected ship; the plan calls for all living ships to be able to scan.
+- Player-facing fog UI (production radar blips / sonar ping VFX instead of Gizmos).
 
 **Partial functionality:**  
-`FogState.Identified` and `FogState.Marked` are both written; no consumer currently behaves differently based on the two states. The attack gate treats both as known.
+Attack gating treats both `Marked` and `Identified` as known.
 
 **Temporary/prototype functionality:**  
-All fog visualization (cones, halos) is Gizmo-based, scene-view only. `FogManager` emits verbose `Debug.Log` lines on every scan summary and every detected/blocked cell.
+All fog visualization (cones, contacts) is Gizmo-based, scene-view only. `FogManager` emits verbose `Debug.Log` lines on every scan summary and every detected/blocked cell.
 
 **Future cleanup:**  
 Replace Gizmo visualization with production fog overlay/UI. Remove or suppress verbose scan logs once fog behavior is verified.
@@ -147,51 +158,55 @@ Replace Gizmo visualization with production fog overlay/UI. Remove or suppress v
 ### 2.5 Combat
 
 **Current implementation:**  
-`CombatResolver.ResolveAttack` performs the full authoritative attack chain: dead-check → charge-readiness → domain match → nearest-cell Chebyshev range (across all attacker/target cell pairs, collecting in-range pairs for step 5) → fog gate (`IsTargetKnown`) → terrain line-of-fire (`HasClearLineOfFire`) → d20 roll → damage → destroyed-ship cleanup. Every rejection path logs a specific reason. `CombatResolver.FindChargeState` is a public helper also used by `AIController`. `CombatResolver.IsTargetKnown` checks the attacker's `FogGrid` for any known target cell. `CombatResolver.HasClearLineOfFire` reuses `VisionResolver.TryGetFirstBlockingCell` to test each in-range cell pair; at least one clear pair allows the attack.
+`CombatResolver.ResolveAttack` performs the full authoritative attack chain:
+1. Dead-check (rejects dead targets).
+2. Phase and turn gating: Battle phase only, attacking player's turn.
+3. Single attack limit: Attacker must not have already attacked this Battle phase (`hasAttackedThisPhase == false`).
+4. Charge readiness: Requires `remaining != 0` and `turnsUntilRecharge == 0`.
+5. Domain match: Target must inhabit weapon's target domain.
+6. Range check: Nearest-cell Chebyshev distance across all attacker/target cell pairs.
+7. Fog gate: Target must be known in attacker's fog (`IsTargetKnown`).
+8. Line of fire: `HasClearLineOfFire` tests every in-range cell pair via `VisionResolver.TryGetFirstBlockingCell`.
+9. d20 roll: `RollWeapon` resolves damage tier.
+10. Armor reduction: `ApplyArmor(rawDamage, target.armor)` reduces damage by 0.15% per armor point (`effectiveDamage = round(rawDamage * (1 - armor * 0.0015))`).
+11. Single-attack flag: `attacker.hasAttackedThisPhase = true`.
+12. Ammo deduction: `weaponCharge.remaining--` decrements finite ammunition.
+13. Sunk cleanup: If target health reaches 0, removes target from occupancy and live fleet, and clears its sensor contact marks via `FogManager.ClearMarksForShip`.
 
 **Missing functionality:**  
-- Armor is stored (`ShipInstance.armor`) but never subtracted from damage.
-- Defense profiles are defined but `ResolveAttack` does not invoke them.
-- Ammo/uses are never decremented from `ChargeState.remaining`.
-- `ChargeState.turnsUntilRecharge` is initialized to 0 and never modified.
-- `DefenseProfile.sideEffectId` strings are stored but no code reads or executes them.
-
-**Partial functionality:**  
-`ChargeState.IsReady` checks `remaining != 0` and `turnsUntilRecharge == 0`, but since `remaining` is never decremented after a successful shot, weapons with finite ammo will always appear ready.
+- Defense profiles are defined in data but `ResolveAttack` does not yet invoke saving throws.
+- `DefenseProfile.sideEffectId` strings are stored but no code executes them.
 
 **Future cleanup:**  
-Implement armor subtraction, defense resolution, ammo decrement, recharge tick, and sideEffect execution. Remove `Debug.Log` combat outcome messages once production feedback UI exists.
+Implement defense saving throws and side-effect execution. Replace `Debug.Log` combat messages with production combat log HUD.
 
 ---
 
 ### 2.6 AI
 
 **Current implementation:**  
-`AIController` acts once per phase for `PlayerB` using the Update loop. It controls only `gridManager.ObstructionShip` (`match.playerB.ships[0]`). During `Move` it calls `gridManager.MoveShip` directly (Chebyshev, one step toward `gridManager.TestShip`). During `Battle` it scores weapons via `ExpectedValue` and calls `gridManager.Combat.ResolveAttack`. It does nothing during `Search`. It does not read `PlayerB`'s `FogGrid`.
+The AI has been overhauled into an event-driven modular architecture:
+- `AiController` subscribes to `TurnManager.PhaseChanged` for Player B turns.
+- `AiTurnContext` captures a per-turn snapshot of living AI ships, friendly memory, and fleet scan usage.
+- `AiEnemyMemory` tracks observed enemy positions, turn recency, and predicted locations across turns.
+- `AiActiveScanner` scores candidate sensor ships and cone orientations, firing up to 1 fleet active scan per Search phase.
+- `AIMovementPlanner1` evaluates movement candidates toward predicted/observed enemy targets or map center if no enemy has been sighted. (Legacy debt: Movement currently executes via `GridManager.MoveShip` Chebyshev steps rather than provisional Dijkstra paths).
+- `AIAttackPlanner` evaluates legal attacks against known targets in Player B's fog, respects the one-attack-per-phase constraint (`hasAttackedThisPhase`), and selects weapons by expected damage.
+- `AIScoring` provides scoring formulas for scans, moves, and attacks.
 
-**Missing functionality (planned):**  
-- Use `FogManager.GetFogGrid(PlayerB)` to find known targets.
-- Not chase or attack hidden targets.
-- Move toward map center when no target is known.
-- Act for every living AI ship, not only the first.
-- Activate `Search` scans.
-- Use provisional movement system.
-
-**Partial functionality:**  
-`AIController.CanFire` pre-checks charge, domain, range, and terrain line-of-fire before calling `ResolveAttack`. However its range check still uses `attacker.anchor` rather than all attacker occupied cells — it diverges from `CombatResolver.ResolveAttack` which uses the minimum distance across all cell pairs. The line-of-fire gate was added in Phase 9B and is correct; only the range pre-check is divergent.
-
-**Temporary/prototype functionality:**  
-The entire `AIController` class is documented as temporary prototype behavior. `[AI]` prefixed `Debug.Log` calls throughout.
+**Legacy debt:**  
+- AI movement execution still calls `GridManager.MoveShip` directly instead of `PreviewMove` and `ConfirmProvisionalMovement`.
+- AI movement does not consume terrain movement costs.
 
 **Future cleanup:**  
-Rewrite `AIController` entirely once fog-aware AI is implemented. Remove temporary `[AI]` logs. Remove or rewrite `CanFire` to match `CombatResolver` range logic. `GridManager.TestShip` and `ObstructionShip` become removable once `AIController` uses `MatchState` directly.
+Migrate `AIMovementPlanner1` execution to use `GridManager.PreviewMove` and atomic confirmation.
 
 ---
 
 ### 2.7 Deployment
 
 **Current implementation:**  
-`DeploymentService.DeployAll` deploys Wolf + Athena for both players. `DeployFleet` now calls `CanPlaceShip` before `PlaceShip` (this was listed as a gap in `PROJECT_STATUS.md` but is now fixed in the source). Player A anchors at x=1, rotation 0. Player B anchors at x=`gridManager.width - 3`, rotation 180. Each ship is assigned `anchorAtTurnStart` at deploy time. `LogStatBlock` is called for each deployed ship.
+`DeploymentService.DeployAll` deploys Wolf + Athena + SwordFish / Carrier rosters. `DeployFleet` calls `CanPlaceShip` before `PlaceShip`. Player A anchors at x=1, rotation 0. Player B anchors at x=`gridManager.width - 3`, rotation 180. Each ship is assigned `anchorAtTurnStart` at deploy time. `LogStatBlock` is called for each deployed ship.
 
 **Missing functionality:**  
 Player-controlled deployment phase. No deployment-phase UI. Roster is hardcoded in `GridManager.Start`.
@@ -207,7 +222,10 @@ Replace hardcoded roster/anchor with player-driven deployment. Remove `LogStatBl
 ### 2.8 Turn Management
 
 **Current implementation:**  
-`TurnManager.AdvancePhase` cycles `Move → Staging → Search → Battle → End`, switches player at `End → Move`. Fires `PhaseChanged` event; `GridManager.HandlePhaseChanged` is the only subscriber. `LogState` emits a debug line on every phase change.
+`TurnManager.AdvancePhase` cycles `Move → Staging → Search → Battle → End`, switches player at `End → Move`. Fires `PhaseChanged` event; `GridManager.HandlePhaseChanged` and `AiController.HandlePhaseChanged` subscribe.
+- **Staging:** Handles contact mine recharge (`turnsUntilRecharge` ticks down) and plane deploy-turn unlock (`canMoveInStaging = true`).
+- **Battle:** Ships execute attacks (one attack per ship per Battle phase).
+- **End:** Decrements plane fuel (`currentFuel--`, destroys plane at 0 fuel) and clears active marks via `FogManager.ClearAllActiveMarks`.
 
 **Missing functionality:**  
 Win condition/game-over detection. End-phase cooldowns. Search input gating (Space currently advances out of Search even without confirming a scan).
@@ -223,16 +241,31 @@ Replace `LogState` with production HUD phase indicator. Add win-check in `Handle
 ### 2.9 Ships and Data Model
 
 **Current implementation:**  
-`ShipInstance` is a plain `[Serializable]` C# class holding all runtime state. `ShipData` builds hardcoded Wolf, Athena, and SwordFish instances. `ShipFactory` dispatches to the correct builder. `ShipType` is the card enum.
+`ShipInstance` is a plain `[Serializable]` C# class holding all runtime state (including `hasAttackedThisPhase`). `ShipData` builds hardcoded Wolf, Athena, SwordFish, and Carrier instances. `ShipFactory` dispatches to the correct builder. `ShipType` is the card enum.
 
 **Missing functionality:**  
-SwordFish is defined but never deployed. No ScriptableObject data pipeline (intentionally deferred per YAGNI). Armor not consumed. Defense execution not implemented.
+No ScriptableObject data pipeline (intentionally deferred per YAGNI). Defense saving throws not implemented.
 
 **Partial functionality:**  
 `DefenseProfile.sideEffectId` is stored as a string (`"BecomeSubSurfaceAndSkipNextMove"`) but no code reads or acts on it.
 
 **Future cleanup:**  
-Add SwordFish to the deployment roster when gameplay needs it. Implement defense execution. Consider ScriptableObject migration when the number of ships justifies it (YAGNI — do not migrate prematurely).
+Implement defense execution. Consider ScriptableObject migration when the number of ships justifies it (YAGNI — do not migrate prematurely).
+
+---
+
+### 2.10 Staging Actions (Mines & Reconnaissance Planes)
+
+**Current implementation:**  
+Staging phase supports tactical deployments:
+- **Contact Mines:** `SwordFishClass` deploys mines in Staging via `M` key. Deployed to adjacent empty pass-through tiles. Detonates on enemy entry dealing 600 damage and removes itself. Recharge ticks in Staging (1 charge per 2 turns, max 2). Rendered in cyan for friendly player, hidden in fog for enemy.
+- **Reconnaissance Planes:** `CarrierClass` deploys planes in Staging via `P` key (launch range 4). Click-selectable in Staging, Tab cycling. Movement locked on deploy turn, unlocked in subsequent Staging phases. `C` key undeploys freshly deployed plane and refunds carrier sortie charge (`remaining++`). Decrements fuel at End phase, destroyed at 0 fuel. Provides absolute halo vision (range 3) that sees over terrain LOS.
+
+**Temporary/prototype functionality:**  
+Keyboard bindings (`M`, `P`, `C`) in `TestShipController`. Gizmo-based plane and mine rendering in `GridView`.
+
+**Future cleanup:**  
+Replace keyboard shortcuts with production UI action buttons. Replace Gizmos with plane sprites/models and mine VFX.
 
 ---
 
@@ -240,14 +273,15 @@ Add SwordFish to the deployment roster when gameplay needs it. Implement defense
 
 | File | Class / Method / Field | Why It Appears Redundant | Still Referenced? | Safe to Remove Now? | Remove When | Replacement |
 |---|---|---|---|---|---|---|
-| `Assets/Scripts/Grid/GridManager.cs` | `TestShip` property | Only exists to give `AIController` first-ship access; `match.playerA.ships[0]` is equivalent | Yes — `AIController.cs` line 45 | No | After AI is rewritten to use `MatchState` directly | `gridManager.Match.playerA.ships[0]` or fog-aware search |
-| `Assets/Scripts/Grid/GridManager.cs` | `ObstructionShip` property | Only exists for `AIController`; comment in source explicitly calls it temporary | Yes — `AIController.cs` lines 35, 44 | No | After AI is rewritten | `gridManager.Match.playerB.ships[0]` or fog-aware search |
-| `Assets/Scripts/Grid/GridManager.cs` | `MoveShip(ship, newAnchor, newRotation)` | Chebyshev-only legacy movement no longer used by human input; provisional system replaced it | Yes — `AIController.cs` line 67 | No | After AI migrates to provisional movement | `PreviewMove` + `ConfirmProvisionalMovement` |
+| `Assets/Scripts/Grid/GridManager.cs` | `TestShip` property | Convenience property; `match.playerA.ships[0]` is equivalent | Retained for backwards compatibility | No | After all test callers migrate | `gridManager.Match.playerA.ships[0]` or fog-aware search |
+| `Assets/Scripts/Grid/GridManager.cs` | `ObstructionShip` property | Convenience property; `match.playerB.ships[0]` is equivalent | Retained for backwards compatibility | No | After all test callers migrate | `gridManager.Match.playerB.ships[0]` or fog-aware search |
+| `Assets/Scripts/Grid/GridManager.cs` | `MoveShip(ship, newAnchor, newRotation)` | Chebyshev-only legacy movement no longer used by human input; provisional system replaced it | Yes — `AIMovementPlanner1.cs` | No | After AI migrates to provisional movement | `PreviewMove` + `ConfirmProvisionalMovement` |
 | `Assets/Scripts/Grid/GridManager.cs` | `DebugRecomputeFog` [ContextMenu] | Developer guide explicitly lists it as safe to remove; not part of phase flow | Yes — invokable via Inspector context menu | Yes — P0 | Immediately | None needed |
-| `Assets/Scripts/AI/AIController.cs` | `CanFire(attacker, target, weapon)` | Mirrors `CombatResolver.ResolveAttack` pre-checks for weapon scoring; duplicates charge/domain/range logic; range calculation uses `attacker.anchor` only (diverges from authoritative nearest-cell logic in `CombatResolver`) | Yes — `DecideAttack` uses it | No | After AI is rewritten with fog-awareness | Inline fog-aware weapon scoring, or a `CombatResolver` utility method for scoring |
-| `Assets/Scripts/Ships/ShipData.cs` | `BuildSwordFishClass` | SwordFish is in the factory but never in any deployment roster; ship has no defenses or vision layers | Yes — `ShipFactory` dispatches to it; `ShipType.SwordFishClass` is referenced | No | When SwordFish is either added to the game or confirmed cut | Keep if SwordFish is planned; complete data (add defenses/vision) first |
-| `docs/PROJECT_STATUS.md` | Entire file | Describes pre-Milestone-5 state (fog as empty placeholder, no VisionResolver, no fleet model); key facts are now wrong (e.g. DeployFleet skips CanPlaceShip — this was fixed) | Yes — referenced in some docs | No — stale data | Update alongside next major status doc update | Update `PROJECT_STATUS.md` content or retire it as superseded by `DEVELOPER_GUIDE.md` |
-| `docs/Agent_Context_Prompt.md` | Section "Active scan is automatic" | Describes active scan as automatic per-Search; this was changed — scan is now player-activated | Yes — used as context for agents | No | When doc maintenance pass happens | Update description |
+| `Assets/Scripts/Grid/GridView.cs` | `DrawDebugHalos` | Removed from codebase | No — REMOVED | Yes — ALREADY REMOVED | Completed | Authoritative fog detection |
+| `Assets/Scripts/Grid/GridView.cs` | `DrawMovementRanges` | Removed from codebase | No — REMOVED | Yes — ALREADY REMOVED | Completed | Production movement UI |
+| `Assets/Scripts/Ships/ShipData.cs` | `BuildSwordFishClass` | Formerly undeployed; now actively deployed with contact mine staging capability | Yes — deployed and used | No (Keep) | N/A — In active use | Ship card definition |
+| `docs/PROJECT_STATUS.md` | Entire file | Describes pre-Milestone-5 state; key facts are now wrong | Yes — referenced in some docs | No — stale data | Update alongside next major status doc update | Update `PROJECT_STATUS.md` content or retire it as superseded by `DEVELOPER_GUIDE.md` |
+| `docs/Agent_Context_Prompt.md` | Section "Active scan is automatic" | Describes active scan as automatic per-Search; this was changed — scan is player-activated | Yes — used as context for agents | No | When doc maintenance pass happens | Update description |
 
 ---
 
@@ -344,11 +378,11 @@ Remove or replace with production UI once health bars, combat log, and notificat
 
 ---
 
-### 4.11 `AIController` [AI]-prefixed logs
+### 4.11 AI Planners Structured Logs
 
-**File:** `Assets/Scripts/AI/AIController.cs`  
-**Classification:** REMOVE WITH AI REWRITE  
-**Reason:** `[AI] Moved to`, `[AI] Move blocked`, `[AI] No valid weapon`, `[AI] Fired` logs are prototype verification only. They will be removed when `AIController` is rewritten.
+**File:** `Assets/Scripts/AI/`  
+**Classification:** KEEP UNTIL PRODUCTION HUD/LOG EXISTS  
+**Reason:** `[AI Movement]`, `[AI ActiveScan]`, and `[AI Attack]` logs provide diagnostic visibility into AI decision-making across living ships. Keep until production combat log and telemetry exist.
 
 ---
 
@@ -356,15 +390,15 @@ Remove or replace with production UI once health bars, combat log, and notificat
 
 **File:** `Assets/Scripts/Grid/GridView.cs`  
 **Classification:** REPLACE WITH PRODUCTION ART  
-**Reason:** Per the roadmap comment in `GridView.cs`: "DrawDebugCones/DrawDebugHalos are no longer 'debug' in the throwaway sense — per the roadmap they're becoming the real toggleable fog/scan visualization." The cone Gizmo currently draws yellow/red wireframe cubes for the active scan preview cone, using `VisionResolver.TryGetFirstBlockingCell` to color blocked cells. This is the intended visualization surface for the production scan preview. Do not remove; replace with production scan overlay.
+**Reason:** Per the roadmap comment in `GridView.cs`: "DrawDebugCones is no longer 'debug' in the throwaway sense — per the roadmap it's becoming the real toggleable fog/scan visualization." The cone Gizmo currently draws yellow/red wireframe cubes for the active scan preview cone, using `VisionResolver.TryGetFirstBlockingCell` to color blocked cells. This is the intended visualization surface for the production scan preview. Do not remove; replace with production scan overlay.
 
 ---
 
-### 4.13 `GridView.DrawDebugHalos` — halo Gizmo
+### 4.13 `GridView.DrawDebugHalos` — halo Gizmo (REMOVED)
 
 **File:** `Assets/Scripts/Grid/GridView.cs`  
-**Classification:** REPLACE WITH PRODUCTION ART  
-**Reason:** Per the roadmap comment, this is a planned visualization surface. It now uses hull-cell range (iterates all `ship.GetOccupiedCells()` as sources) and calls `VisionResolver.TryGetFirstBlockingCell` per source per candidate cell — matching `VisionResolver.IsVisibleFromAnySource` exactly. Clear cells draw cyan; terrain-blocked cells draw dark red. The Gizmo now matches the authoritative passive detection result.
+**Status:** REMOVED  
+**Reason:** Passive detection is authoritative in `FogManager` and `VisionResolver`. The standalone halo Gizmo has been removed from `GridView` to reduce visual clutter on the board.
 
 ---
 
@@ -374,13 +408,16 @@ No production art, sprites, prefabs, or materials exist in this repository. All 
 
 | Location | Current Placeholder | Purpose | Final Replacement | Removal Point |
 |---|---|---|---|---|
-| `GridView.OnDrawGizmos` ship cubes | Cyan/red `DrawCube` per occupied tile | Identifies ship positions and ownership | Player-specific ship sprites or models on the board | Stage D — when ship sprites are added |
-| `GridView.DrawProvisionalShips` | Semi-transparent cyan/red cubes at preview positions | Shows provisional movement destination | Production movement preview (highlighted path, ghost ship) | Stage D — when production movement UI is built |
-| `GridView.DrawMovementRanges` | Translucent cyan/red cells over reachable anchors | Shows Dijkstra reachable area for moving ship | Production movement range overlay (shaded cells or hex-highlight) | Stage D — when production movement UI is built |
+| `GridView.OnDrawGizmos` ship cubes | Cyan/red `DrawCube` per occupied tile | Identifies ship positions and ownership; red enemy cubes only drawn when `Identified` in absolute vision (or `revealAllInFog`) | Player-specific ship sprites or models on the board | Stage D — when ship sprites are added |
+| `GridView.DrawSensorContact` | Light orange cube with gold wireframe (`sensorMarkedColor`) | Shows sensor contact when a tile is `Marked` in fog without revealing ship identity | Production radar blip or sonar ping VFX | Stage D — when production sensor VFX is built |
+| `GridView.DrawProvisionalShips` | Semi-transparent cyan/red cubes at preview positions | Shows provisional movement destination (enemy previews suppressed in normal play) | Production movement preview (highlighted path, ghost ship) | Stage D — when production movement UI is built |
 | `GridView.DrawTerrain` | Orange cubes (Costly), dark grey cubes (Impassable), grey wireframe (Normal) | Displays terrain type per tile | Final tile art per terrain type | Stage D — when terrain tile art is added |
 | `GridView.DrawStartingZones` | Blue/red translucent zone overlay | Marks player starting areas | Final zone indicator art (border or shading) or removed if deployment is player-controlled | Stage D |
 | `GridView.DrawDebugCones` | Yellow/red wireframe cells for active scan cone | Shows active scan preview including LOS-blocked cells | Production scan preview overlay with blocked-cell indicator | Stage D — when production scan UI is built; keep LOS coloring logic |
-| `GridView.DrawDebugHalos` | Cyan/dark-red wireframe cells per ship's passive halo range (cyan = clear, dark red = LOS-blocked) | Shows passive detection coverage with accurate hull-cell range and terrain LOS | Production fog visualization (fog-of-war overlay, visibility shading) | Stage D — when production fog UI is built |
+| `GridView.DrawMines` | Cyan/red wireframe markers for contact mines | Shows deployed contact mines (enemy mines hidden in fog unless revealed) | Production mine VFX/models | Stage D |
+| `GridView.DrawPlanes` | Yellow wireframe markers with launch range indicator | Shows active carrier reconnaissance aircraft | Production aircraft sprites/models | Stage D |
+| `GridView.DrawDebugHalos` | Formerly cyan/dark-red wireframe cells | Formerly showed passive detection coverage | REMOVED | Completed |
+| `GridView.DrawMovementRanges` | Formerly translucent cells over reachable anchors | Formerly showed Dijkstra reachable area | REMOVED | Completed |
 
 ---
 
@@ -416,7 +453,7 @@ No production art, sprites, prefabs, or materials exist in this repository. All 
 ### 6.4 Hardcoded fleet roster in `GridManager.Start`
 
 **File:** `Assets/Scripts/Grid/GridManager.cs` (lines 53–54)  
-**Values:** Both players receive `[WolfClass, AthenaClass]` hardcoded.  
+**Values:** Deploys Wolf, Athena, SwordFish, and Carrier.  
 **Recommendation:** Keep for now. This is the prototype match setup. Replace with a fleet-selection or configuration system when deployment and game setup are implemented.  
 **Action:** P2 — replace with match/lobby configuration when that feature is built.
 
@@ -441,46 +478,29 @@ No production art, sprites, prefabs, or materials exist in this repository. All 
 
 ---
 
-### 6.7 `ChargeState` ammo never decremented
+### 6.7 `ChargeState` ammo deduction — IMPLEMENTED
 
 **File:** `Assets/Scripts/Combat/CombatResolver.cs`  
-**Issue:** `ResolveAttack` does not decrement `weaponCharge.remaining` after a successful attack. All weapons with finite ammo (Wolf MRK-1 Torpedo: 4, Spear: 2, Hippocampus: 3; Athena Anti-Ship Missile: 2, Anti-Sub Rocket: 2) fire without limit. `ChargeState.IsReady` checks `remaining != 0`, so weapons initialized with ammo always pass.  
-**Recommendation:** Keep the data structures as-is. Implement ammo decrement in `CombatResolver.ResolveAttack` as part of Milestone 6 combat resolution.  
-**Action:** P1 — implement decrement alongside armor/defense resolution.
+**Current state:** `ResolveAttack` now decrements `weaponCharge.remaining--` upon resolving an attack with finite ammunition. Weapons with 0 remaining charges are not ready for subsequent attacks until replenished.  
+**Action:** Completed.
 
 ---
 
 ## 7. Duplicate or Diverging Logic
 
-### 7.1 `AIController.CanFire` vs `CombatResolver.ResolveAttack` — range calculation divergence
+### 7.1 AI Range Calculation — RESOLVED
 
-**Authoritative implementation:**  
-`CombatResolver.ResolveAttack` (lines 34–40) — calculates minimum Chebyshev distance across all pairs of attacker-occupied cells × target-occupied cells.
-
-**Duplicate:**  
-`AIController.CanFire` (lines 123–131) — calculates minimum Chebyshev distance from `attacker.anchor` to each target-occupied cell only. Does not iterate attacker occupied cells.
-
-**Why duplication exists:**  
-`CanFire` is a pre-flight weapon scoring check used by `DecideAttack` before calling `ResolveAttack`. It was written as a simplified mirror of the combat validation checks.
-
-**Divergence consequence:**  
-For a two-cell ship (Wolf: `(anchor, anchor+(1,0))`), the anchor-based range check may report a shot as out-of-range when `ResolveAttack`'s nearest-cell check would accept it. The line-of-fire pre-check (Phase 9B addition) is correct — it iterates all attacker cells when building in-range pairs for `HasClearLineOfFire`. Only the initial range gate in `CanFire` is divergent.
-
-**Should it be removed/replaced:**  
-Yes. `CanFire` should either: (a) be removed and the weapon-scoring loop in `DecideAttack` should query `CombatResolver` for range validity, or (b) be corrected to use the same min-occupied-cell logic. Option (a) is cleaner and eliminates the divergence entirely.
-
-**When:**  
-When AI is rewritten (P1).
+**State:** The AI was rewritten with modular planners (`AIAttackPlanner.cs`). It now queries the authoritative `CombatResolver.ResolveAttack` logic and checks target availability directly against known enemy cells from fog. Divergence in prototype `CanFire` has been resolved.
 
 ---
 
 ### 7.2 `TestShipController.HandleAttackInput` input-level checks vs `CombatResolver.ResolveAttack`
 
 **Authoritative implementation:**  
-`CombatResolver.ResolveAttack` — dead check, charge, domain, range, fog, d20, damage.
+`CombatResolver.ResolveAttack` — dead check, phase/turn check, single-attack limit (`hasAttackedThisPhase`), charge, domain, range, fog, line of fire, d20, damage, ammo deduction, and mark cleanup.
 
 **Input-level checks in `TestShipController`:**  
-`HandleAttackInput` (lines 183–196) checks: (a) tile exists, (b) occupant exists, (c) occupant is not friendly, (d) `selectedWeaponIndex` is in bounds.
+`HandleAttackInput` checks: (a) tile exists, (b) occupant exists, (c) occupant is not friendly, (d) `selectedWeaponIndex` is in bounds.
 
 **Why duplication exists:**  
 These are input-level guards to prevent calling `ResolveAttack` with obviously invalid parameters. They are not combat rules — they are UI filtering.
@@ -490,32 +510,13 @@ No. These are intentional input-level checks, not duplicated business logic. The
 
 ---
 
-### 7.3 `AIController.CanFire` charge/domain checks vs `CombatResolver.ResolveAttack`
-
-**Authoritative implementation:**  
-`CombatResolver.ResolveAttack` checks charge readiness via `FindChargeState` and domain match.
-
-**In `CanFire`:**  
-Lines 113–121 repeat the same charge-readiness and domain checks.
-
-**Why duplication exists:**  
-Pre-flight weapon selection: the AI needs to filter weapons before scoring to avoid scoring uncharged or domain-mismatched weapons.
-
-**Assessment:**  
-The charge and domain duplication here is acceptable and intentional — it is a read-only pre-check, not a second execution path. The range check (above, §7.1) is the problematic divergence. The charge and domain checks are not harmful.
-
-**Should it be removed/replaced:**  
-No action needed on charge/domain. Fix the range check only.
-
----
-
-### 7.4 `GridManager.HandlePhaseChanged` provisional snapshot vs `TestShipController` anchor snapshot
+### 7.3 `GridManager.HandlePhaseChanged` provisional snapshot vs `TestShipController` anchor snapshot
 
 **GridManager side:**  
 `HandlePhaseChanged(Phase.Move)` creates a `ProvisionalMovementState` for each current-player ship, which stores `OriginalAnchor` and `OriginalRotation`.
 
 **TestShipController side:**  
-`HandleMoveInput` block (lines 88–94) snapshots `anchorAtTurnStart` for all Player A ships when the phase first becomes `Move`.
+`HandleMoveInput` snapshots `anchorAtTurnStart` for all Player A ships when the phase first becomes `Move`.
 
 **Why duplication exists:**  
 `ProvisionalMovementState.OriginalAnchor` is the provisional system's snapshot (used for path validation from the movement start position). `anchorAtTurnStart` on `ShipInstance` is the legacy movement budget origin used by `MoveShip` (legacy Chebyshev method). They serve different consumers.
@@ -558,12 +559,12 @@ Remove `anchorAtTurnStart` snapshot logic from `TestShipController` after `MoveS
 
 ---
 
-### 8.4 `ChargeState.turnsUntilRecharge`
+### 8.4 `ChargeState.turnsUntilRecharge` — IN ACTIVE USE
 
 **File:** `Assets/Scripts/Combat/ChargeState.cs`  
-**Status:** Field initialized to 0 in all `ChargeState` constructors. Never modified by any code. `ChargeState.IsReady` checks it (`turnsUntilRecharge == 0`), which always returns true since it is never incremented.  
-**Assessment:** Not dead — it is planned recharge state. The recharge tick logic simply has not been implemented. Keep.  
-**Action:** P1 — implement recharge tick in Milestone 6.
+**Status:** Now actively consumed by the contact mine recharge cycle in the Staging phase (`GridManager.HandlePhaseChanged` ticks down `turnsUntilRecharge` every 2 turns, restoring mine charges up to capacity).  
+**Assessment:** No longer dormant — active gameplay mechanic.  
+**Action:** Keep.
 
 ---
 
@@ -593,12 +594,12 @@ Remove `anchorAtTurnStart` snapshot logic from `TestShipController` after `MoveS
 
 ---
 
-### 8.8 `SwordFishClass` — defined but never deployed
+### 8.8 `SwordFishClass` — DEPLOYED AND IN ACTIVE USE
 
 **Files:** `Assets/Scripts/Ships/ShipType.cs`, `ShipFactory.cs`, `ShipData.cs`  
-**Status:** `SwordFishClass` is a valid `ShipType` enum value with a complete `BuildSwordFishClass` builder. However: it is not in either player's `fleetRoster` in `GridManager.Start`. The builder gives it no `defenses` or `visionLayers`.  
-**Safe to remove?** No. It is a legitimate planned ship card. It should be completed (add defenses and vision) and added to the deployment roster when the game design calls for it.  
-**Action:** P2 — complete the SwordFish card definition and add to roster when the design confirms it.
+**Status:** Deployed in fleet rosters. Provides contact mine deployment during the Staging phase with 2-turn recharge cycles.  
+**Assessment:** Active gameplay ship card.  
+**Action:** Keep.
 
 ---
 
@@ -655,39 +656,37 @@ Remove `anchorAtTurnStart` snapshot logic from `TestShipController` after `MoveS
 
 ## 10. Architecture Sanitation
 
-### 10.1 `AIController` bypasses provisional movement
+### 10.1 AI movement bypasses provisional movement (Legacy Debt)
 
-**Issue:** `AIController.DecideMove` calls `gridManager.MoveShip` (legacy Chebyshev) directly. This means the AI's movement does not go through the provisional system, does not consume terrain cost, does not integrate with `HandlePhaseChanged`'s provisional-snapshot creation, and does not participate in multi-ship atomic confirmation.  
-**Intended architecture:** All movement should use `PreviewMove` → `ConfirmProvisionalMovement`. The `GridManager.HandlePhaseChanged(Move)` already creates provisional snapshots for all current-player ships.  
-**Smallest fix:** Rewrite `DecideMove` to call `gridManager.PreviewMove` and let the existing `HandlePhaseChanged(Staging)` confirm it atomically, the same path the human player uses.
-
----
-
-### 10.2 `AIController` reads global ship references instead of `MatchState`
-
-**Issue:** `AIController` reads `gridManager.TestShip` and `gridManager.ObstructionShip` — shortcut properties that expose `match.playerA.ships[0]` and `match.playerB.ships[0]`. These are temporary accessors documented as such in the `GridManager` source. The AI should read from `gridManager.Match.playerB.ships` for its own ships and from its `FogGrid` for enemy targets.  
-**Intended architecture:** AI uses fog-aware target selection from its own `FogGrid`; it reads its own fleet from `MatchState`.  
-**Smallest fix:** Replace all `gridManager.TestShip`/`ObstructionShip` references with `gridManager.Match.playerA/playerB.ships[0]` as an interim step, then expand to full fog-aware multi-ship iteration.
+**Issue:** `AIMovementPlanner1` calculates a target coordinate and calls `gridManager.MoveShip` (legacy Chebyshev) directly. This means the AI's movement does not go through the provisional system, does not consume terrain cost, and does not participate in multi-ship atomic confirmation.  
+**Intended architecture:** All movement should use `PreviewMove` → `ConfirmProvisionalMovement`.  
+**Smallest fix:** Rewrite the AI movement execution step to call `gridManager.PreviewMove` and confirm atomically.
 
 ---
 
-### 10.3 `DrawDebugHalos` — RESOLVED
+### 10.2 AI reads global ship references — RESOLVED
 
-**Was:** `GridView.DrawDebugHalos` used `ship.anchor` as the single range origin, which made the Gizmo approximate for multi-cell ships and did not apply LOS.  
-**Fixed:** `DrawDebugHalos` now iterates `ship.GetOccupiedCells()` for both the range check and the LOS check, calling `VisionResolver.TryGetFirstBlockingCell` per source cell — matching `VisionResolver.IsVisibleFromAnySource` exactly. Clear cells draw cyan; terrain-blocked cells draw dark red. No architecture concern remains here.
+**Was:** `AIController` read `gridManager.TestShip` and `gridManager.ObstructionShip`.  
+**Fixed:** The overhauled AI planners (`AiTurnContext`, `AIMovementPlanner1`, `AIAttackPlanner`) query `gridManager.Match.playerB.ships` and `gridManager.Match.playerA.ships` directly, respecting Fog of War knowledge.
+
+---
+
+### 10.3 `DrawDebugHalos` and `DrawMovementRanges` — RESOLVED
+
+**Status:** Both methods have been removed from `GridView.cs`. Authoritative passive detection is computed by `FogManager` and `VisionResolver`, with visual rendering handled via `DrawSensorContact` and selective enemy ship rendering.
 
 ---
 
 ### 10.4 `WeaponProfile` constructor parameter ordering inconsistency
 
-**Issue:** `WeaponProfile` constructor signature is `(id, ammo, targetDomain, rollTiers, weaponRange)` — `weaponRange` is last. All `ShipData` builders use named parameters (e.g. `weaponRange: 4`), so order does not matter in practice. But the field declaration order in `WeaponProfile.cs` has `weaponRange` after `rollTiers`, which is unusual — weapon range is a primary stat typically declared before the roll table.  
+**Issue:** `WeaponProfile` constructor signature is `(id, ammo, targetDomain, rollTiers, weaponRange)` — `weaponRange` is last. All `ShipData` builders use named parameters (e.g. `weaponRange: 4`), so order does not matter in practice. But the field declaration order in `WeaponProfile.cs` has `weaponRange` after `rollTiers`.  
 **Assessment:** No functional bug since named parameters are used. P3 cosmetic — reorder fields for readability if desired.
 
 ---
 
 ### 10.5 `FogManager.RecomputeAllPassive` does not call `RunActiveSearch` anymore
 
-**Issue:** Earlier in development, `HandlePhaseChanged(Search)` called both `RecomputeAllPassive` and `RunActiveSearch(CurrentPlayer)` automatically. The current source (`GridManager.HandlePhaseChanged` lines 484–491) calls only `RecomputeAllPassive` on `Search`. `RunActiveSearch` is now called only from `GridManager.ConfirmActiveScan`, which requires player activation. This is an intentional design change (player-selected scan), but the `FogManager.RunActiveSearch` signature changed to accept explicit `bow` and `forward` parameters as a result. This is correct and clean — noting it here so it is not mistaken for missing behavior.
+**Issue:** Earlier in development, `HandlePhaseChanged(Search)` called both `RecomputeAllPassive` and `RunActiveSearch(CurrentPlayer)` automatically. The current source calls only `RecomputeAllPassive` on `Search`. `RunActiveSearch` is now called only from `GridManager.ConfirmActiveScan` (player confirmation) and `AiActiveScanner.ExecuteScan` (AI scan). This is an intentional design change enforcing the 1-scan-per-fleet limit.
 
 ---
 
@@ -706,22 +705,18 @@ Items that are clearly unused or dead and safe to remove immediately.
 
 ### Stage B: Cleanup After Current Implementation
 
-Items that should remain until the currently planned AI rewrite and combat completion are done.
+Items that should remain until subsequent feature milestones are reached.
 
 | File | Code | Reason | Dependency | Safe Removal Point | Replacement |
 |---|---|---|---|---|---|
-| `Assets/Scripts/Grid/GridManager.cs` | `TestShip` property | Temporary AI accessor | AI must stop using it | After AI uses `MatchState` directly | `gridManager.Match.playerA.ships[0]` or fog-aware search |
-| `Assets/Scripts/Grid/GridManager.cs` | `ObstructionShip` property | Temporary AI accessor | AI must stop using it | After AI uses `MatchState` directly | `gridManager.Match.playerB.ships[0]` |
-| `Assets/Scripts/Grid/GridManager.cs` | `MoveShip(ship, anchor, rotation)` legacy method | Only used by AI; provisional system replaced it for human input | AI must migrate to provisional movement | After AI uses `PreviewMove` | `PreviewMove` + `ConfirmProvisionalMovement` |
-| `Assets/Scripts/AI/AIController.cs` | `CanFire` method | Divergent range logic; duplicates `CombatResolver` charge/domain/range checks with incorrect range calc | AI rewrite | During AI rewrite | Inline fog-aware scoring or `CombatResolver` utility |
-| `Assets/Scripts/AI/AIController.cs` | All `[AI]` debug logs | Prototype-only feedback | AI rewrite | During AI rewrite | Remove |
-| `Assets/Scripts/AI/AIController.cs` | `actedThisPhase = true` after action | Race condition; should be before | AI rewrite or hotfix | P1 — fix before AI rewrite or as a standalone fix | Move flag before `DecideMove`/`DecideAttack` calls |
+| `Assets/Scripts/Grid/GridManager.cs` | `TestShip` property | Convenience property; `match.playerA.ships[0]` is equivalent | Test code | After test callers migrate | Direct MatchState query |
+| `Assets/Scripts/Grid/GridManager.cs` | `ObstructionShip` property | Convenience property; `match.playerB.ships[0]` is equivalent | Test code | After test callers migrate | Direct MatchState query |
+| `Assets/Scripts/Grid/GridManager.cs` | `MoveShip(ship, anchor, rotation)` legacy method | Only used by AI movement execution step | AI provisional migration | After AI uses `PreviewMove` | `PreviewMove` + `ConfirmProvisionalMovement` |
 | `Assets/Scripts/Turns/TurnManager.cs` | `LogState()` call | Console-only phase feedback | Production HUD | After production phase indicator HUD exists | Phase indicator in production UI |
 | `Assets/Scripts/Match/DeploymentService.cs` | `ship.LogStatBlock(...)` in `DeployFleet` | Deployment verification; not gameplay | Ship stats stabilized | After ship stats are finalized | Remove |
 | `Assets/Scripts/FogOfWar/FogManager.cs` | All `Debug.Log` scan summary and per-cell lines | Fog verification; no UI alternative yet | Production fog UI | After fog UI exists and behavior is confirmed | Production fog visualization |
-| `Assets/Scripts/Combat/CombatResolver.cs` | `"Target not known."` and outcome logs | Only combat feedback available | Production combat feedback UI | After health bars and combat log UI exist | Production HUD combat log |
-| `Assets/Scripts/Grid/TestShipController.cs` | `Debug.Log("Domain toggled"...)` and `ship.LogStatBlock` call | Domain state feedback | Production UI for domain toggle | After production domain indicator exists | Remove |
-| `Assets/Scripts/Grid/TestShipController.cs` | Movement and scan preview logs | Provisional state feedback | Production movement UI | After production movement UI exists | Remove |
+| `Assets/Scripts/Combat/CombatResolver.cs` | Rejection and outcome logs | Diagnostic feedback | Production combat feedback UI | After health bars and combat log UI exist | Production HUD combat log |
+| `Assets/Scripts/Grid/TestShipController.cs` | Movement, scan, attack, and staging logs | Prototype feedback | Production movement/combat UI | After production UI exists | Remove |
 
 ---
 
@@ -731,11 +726,10 @@ Items that can be removed after full planned gameplay systems are implemented.
 
 | File | Code | Reason | Dependency | Safe Removal Point | Replacement |
 |---|---|---|---|---|---|
-| `Assets/Scripts/Grid/TestShipController.cs` | Entire class | Prototype Player A controller | Production input system replaces all behaviors | After production input handles move, scan, attack, phase advance | Production input system |
-| `Assets/Scripts/Ships/ShipInstance.cs` | `LogStatBlock` method | Console stat verification helper | Deployment logging removed | After deployment logging is removed or production ship inspector exists | Production ship stats display |
-| `Assets/Scripts/Grid/GridManager.cs` | Provisional anchor snapshot in `HandlePhaseChanged(Move)` for `anchorAtTurnStart` sync | `anchorAtTurnStart` is only needed by `MoveShip` legacy path | `MoveShip` retired | After `MoveShip` is removed | The provisional system's own `OriginalAnchor` snapshot already handles the correct origin |
-| `docs/PROJECT_STATUS.md` | Entire document (or update it) | Describes pre-Milestone-5 state; multiple facts now incorrect | Historical reference | After documentation pass | Update content to reflect current state, or mark as historical/archived |
-| `docs/Agent_Context_Prompt.md` | "Active scan is automatic" section | Stale — scan is now player-activated | Documentation pass | During next docs update | Update description |
+| `Assets/Scripts/Grid/TestShipController.cs` | Entire class | Prototype Player A controller | Production input system replaces all behaviors | After production input handles move, scan, attack, staging, phase advance | Production input system |
+| `Assets/Scripts/Ships/ShipInstance.cs` | `LogStatBlock` method | Console stat verification helper | Deployment logging removed | After deployment logging is removed | Production ship stats display |
+| `Assets/Scripts/Grid/GridManager.cs` | Provisional anchor snapshot in `HandlePhaseChanged(Move)` for `anchorAtTurnStart` sync | `anchorAtTurnStart` is only needed by `MoveShip` legacy path | `MoveShip` retired | After `MoveShip` is removed | `ProvisionalMovementState.OriginalAnchor` |
+| `docs/PROJECT_STATUS.md` | Entire document (or update it) | Describes pre-Milestone-5 state; multiple facts now incorrect | Historical reference | After documentation pass | Update content to reflect current state |
 
 ---
 
@@ -746,13 +740,14 @@ Items that must be replaced by proper UI, art, or production systems rather than
 | File | Code | Reason | Dependency | Safe Removal Point | Replacement |
 |---|---|---|---|---|---|
 | `Assets/Scripts/Grid/GridView.cs` | `DrawDebugCones` | Visualization surface for scan preview; LOS coloring logic is correct | Production scan preview UI/overlay | After production scan preview replaces it | Production scan overlay with LOS-blocked cell indicator |
-| `Assets/Scripts/Grid/GridView.cs` | `DrawDebugHalos` | Visualization surface for passive fog coverage | Production fog visibility UI | After production fog UI replaces it | Production fog overlay or ship detection indicator |
+| `Assets/Scripts/Grid/GridView.cs` | `DrawSensorContact` | Placeholder contact indicator | Production sensor radar blip / sonar ping VFX | After sensor VFX is added | Production contact VFX |
 | `Assets/Scripts/Grid/GridView.cs` | Ship cube Gizmos (cyan/red `DrawCube`) | Placeholder ship representation | Production ship sprites/models | After production ship art is added | Ship sprite or model renderer |
 | `Assets/Scripts/Grid/GridView.cs` | `DrawProvisionalShips` | Placeholder provisional movement preview | Production movement UI | After production movement UI is built | Movement preview with path animation |
-| `Assets/Scripts/Grid/GridView.cs` | `DrawMovementRanges` | Placeholder reachable area display | Production movement UI | After production movement range highlight is built | Shaded movement range overlay |
 | `Assets/Scripts/Grid/GridView.cs` | `DrawTerrain` | Placeholder terrain coloring | Production terrain art | After terrain tile art is added | Final tile art per terrain type |
-| `Assets/Scripts/Grid/GridView.cs` | `DrawStartingZones` | Placeholder deployment zone indicator | Production deployment zone art or player-controlled deployment | After deployment zone is art-replaced | Final zone indicator or removed if zones are implicit |
-| `Assets/Settings/InputSystem_Actions.inputactions` | Entire asset | Unused legacy Input System actions asset | Verify it is not wired in scene | After confirming no scene reference | None, or the new production input system |
+| `Assets/Scripts/Grid/GridView.cs` | `DrawStartingZones` | Placeholder deployment zone indicator | Production deployment zone art | After deployment zone is art-replaced | Final zone indicator art |
+| `Assets/Scripts/Grid/GridView.cs` | `DrawMines` | Placeholder contact mine wireframe | Production mine models/VFX | After mine art is added | Final mine art |
+| `Assets/Scripts/Grid/GridView.cs` | `DrawPlanes` | Placeholder reconnaissance plane wireframe | Production aircraft sprites/models | After plane art is added | Final aircraft art |
+| `Assets/Settings/InputSystem_Actions.inputactions` | Entire asset | Unused legacy Input System actions asset | Verify it is not wired in scene | After confirming no scene reference | None, or production input system |
 
 ---
 
@@ -761,24 +756,23 @@ Items that must be replaced by proper UI, art, or production systems rather than
 ### Code
 
 - [ ] Remove `GridManager.DebugRecomputeFog` and `[ContextMenu]` attribute
-- [ ] Remove `GridManager.TestShip` property (after AI rewrite)
-- [ ] Remove `GridManager.ObstructionShip` property (after AI rewrite)
+- [ ] Remove `GridManager.TestShip` property (after AI/test migration)
+- [ ] Remove `GridManager.ObstructionShip` property (after AI/test migration)
 - [ ] Remove `GridManager.MoveShip` legacy method (after AI migrates to provisional)
-- [ ] Remove `AIController.CanFire` method (during AI rewrite; replace with corrected logic)
-- [ ] Fix `AIController.actedThisPhase` timing (set flag before `DecideMove`/`DecideAttack`)
+- [x] Replace `AIController.CanFire` divergent logic — **DONE** (handled by `AIAttackPlanner`)
+- [x] Fix `AIController.actedThisPhase` timing — **DONE** (replaced by event-driven `PhaseChanged` subscription)
 - [ ] Remove stale comments describing old movement behavior in `TestShipController`
 - [ ] Remove stale `placeholder` comment on `ShipInstance.movementRange`
-- [x] Correct `DrawDebugHalos` to use hull-cell range and LOS — **DONE**
-- [ ] Remove `TestShipController.Update` phase/turn guard redundancy if any after production input exists
+- [x] Correct `DrawDebugHalos` to use hull-cell range and LOS — **DONE** (subsequently removed from `GridView`)
+- [x] Remove `DrawMovementRanges` from `GridView` — **DONE**
 - [ ] Remove or simplify `ProvisionalMovementState`'s `OriginalAnchor` duplication with `anchorAtTurnStart` after `MoveShip` is retired
 
 ### Debugging
 
 - [ ] Remove `GridManager.DebugRecomputeFog` context menu
-- [ ] Remove all `[AI]` prefixed `Debug.Log` calls in `AIController`
 - [ ] Remove `TurnManager.LogState` calls (replace with production phase HUD)
 - [ ] Remove `ShipInstance.LogStatBlock` call from `DeploymentService.DeployFleet`
-- [ ] Remove `TestShipController` movement/scan/domain `Debug.Log` calls (with controller removal)
+- [ ] Remove `TestShipController` input/staging/combat logs (with controller removal)
 - [ ] Remove or suppress verbose `FogManager` per-cell scan logs (replace with production fog UI)
 - [ ] Remove `CombatResolver` outcome `Debug.Log` calls (replace with production combat log)
 - [ ] Keep `CombatResolver.RollWeapon` `Debug.LogWarning` (data-integrity guard — keep permanently)
@@ -788,12 +782,12 @@ Items that must be replaced by proper UI, art, or production systems rather than
 ### Art / UI
 
 - [ ] Replace ship cube Gizmos with production ship sprites or models
-- [ ] Replace `DrawDebugHalos` Gizmo with production fog/visibility overlay
+- [ ] Replace `DrawSensorContact` Gizmo with production radar blip / sonar ping VFX
 - [ ] Replace `DrawDebugCones` Gizmo with production scan preview overlay
 - [ ] Replace `DrawProvisionalShips` Gizmo with production movement preview
-- [ ] Replace `DrawMovementRanges` Gizmo with production movement range highlight
 - [ ] Replace `DrawTerrain` Gizmo with terrain tile art
 - [ ] Replace `DrawStartingZones` Gizmo with production zone indicator or player deployment UI
+- [ ] Replace `DrawMines` and `DrawPlanes` Gizmos with production sprites/models
 - [ ] Build fog/scan toggle UI
 - [ ] Build health bar UI
 - [ ] Build phase/player/weapon indicator HUD
@@ -806,20 +800,21 @@ Items that must be replaced by proper UI, art, or production systems rather than
 - [ ] Confirm Wolf "Default Absolute Vision" range = 4 against design document
 - [ ] Replace hardcoded fleet roster in `GridManager.Start` with match/lobby setup
 - [ ] Replace hardcoded deployment anchors in `DeploymentService` with player deployment
-- [ ] Implement ammo decrement in `CombatResolver.ResolveAttack` (Milestone 6)
-- [ ] Implement defense resolution and `sideEffectId` execution (Milestone 6)
-- [ ] Implement recharge tick for `ChargeState.turnsUntilRecharge` (Milestone 6)
-- [ ] Complete `SwordFishClass` ship card (add defenses and vision layers) when design confirms it
+- [x] Implement ammo decrement in `CombatResolver.ResolveAttack` — **DONE**
+- [x] Implement armor damage reduction in `CombatResolver.ResolveAttack` — **DONE**
+- [x] Implement one-attack-per-ship Battle phase constraint (`hasAttackedThisPhase`) — **DONE**
+- [x] Implement dead-ship contact mark cleanup (`FogManager.ClearMarksForShip`) — **DONE**
+- [x] Implement recharge tick for `ChargeState.turnsUntilRecharge` — **DONE** (consumed by contact mines)
+- [x] Complete `SwordFishClass` ship card with contact mine deployment — **DONE**
+- [ ] Implement defense saving throws and `sideEffectId` execution (Milestone 6+)
 
 ### Architecture
 
-- [ ] Verify AI only reads `MatchState` and its own `FogGrid`, not `TestShip`/`ObstructionShip`
-- [ ] Verify AI uses provisional movement path (not legacy `MoveShip`)
-- [ ] Verify single range validation path (remove `CanFire` divergence)
+- [x] Verify AI reads `MatchState` and its own `FogGrid` — **DONE** (via `AiTurnContext`)
+- [ ] Verify AI uses provisional movement path (currently still calls `MoveShip`)
+- [x] Verify single range validation path — **DONE**
 - [ ] Verify `anchorAtTurnStart` is only maintained while `MoveShip` exists
-- [ ] Verify no second placement validator exists in controllers (currently clean)
-- [ ] Verify `DrawDebugHalos` uses hull-cell range after fix
-- [ ] Verify no ScriptableObject data pipeline is introduced prematurely (YAGNI)
+- [ ] Verify no second placement validator exists in controllers (clean)
 - [ ] Confirm `Assets/_Recovery/` scenes are not in build settings before deletion
 - [ ] Confirm `InputSystem_Actions.inputactions` has no active scene or script references before cleanup
 
@@ -835,36 +830,11 @@ safe to remove now
 remove immediately (P0)
 
 
-AIController.actedThisPhase timing bug
-    ↓
-fix before or during AI rewrite
-    ↓
-remove risk of frame-repeated AI action (P1)
-
-
-AIController.CanFire (divergent range)
+AI movement execution (AIMovementPlanner1 -> MoveShip)
     ↓
 keep until
     ↓
-AI is rewritten with fog-aware target selection
-    ↓
-remove CanFire, use corrected inline scoring (P1)
-
-
-GridManager.TestShip / ObstructionShip properties
-    ↓
-keep until
-    ↓
-AIController stops referencing them
-    ↓
-remove both properties from GridManager (P1)
-
-
-GridManager.MoveShip (legacy Chebyshev)
-    ↓
-keep until
-    ↓
-AIController.DecideMove migrates to PreviewMove + ConfirmProvisionalMovement
+AI migrates to PreviewMove + ConfirmProvisionalMovement
     ↓
 retire MoveShip method (P1)
 
@@ -933,16 +903,7 @@ production active scan preview overlay exists
 remove or replace Gizmo; keep LOS coloring logic (P — Stage D)
 
 
-DrawDebugHalos Gizmo
-    ↓
-keep until
-    ↓
-production fog visibility UI / ship detection overlay exists
-    ↓
-remove Gizmo (P — Stage D)
-
-
-All other GridView Gizmo methods (ship cubes, zones, terrain, movement)
+All other GridView Gizmo methods (ship cubes, contacts, zones, terrain, provisional, mines, planes)
     ↓
 keep until
     ↓
@@ -956,7 +917,7 @@ TestShipController (entire class)
 keep until
     ↓
 production input system handles: move, rotate, scan activate/rotate/confirm,
-weapon selection, attack input, phase advance
+weapon selection, attack input, staging deployment, phase advance
     ↓
 remove TestShipController (P — Stage D)
 ```
@@ -970,60 +931,52 @@ remove TestShipController (P — Stage D)
 The following systems are functionally present and verified in source:
 
 - **Grid foundation:** 30×15 `Dictionary<Vector2Int, Tile>` board, occupancy, placement validation (`CanPlaceShip`), terrain (Normal/Costly/Impassable) loaded from `MapDefinition`.
-- **Movement:** Dijkstra 8-direction pathfinding (`GridPathfinder`), provisional movement with keyboard and pointer/drag input, multi-ship atomic commit, Escape/C cancel. Space advances phase only when all previews are valid.
-- **Ships and data model:** `ShipInstance` (all runtime state), `ShipData` builders for Wolf, Athena, and SwordFish. Weapon, defense, vision, and charge profiles all defined.
-- **Turns:** Five-phase cycle (`Move → Staging → Search → Battle → End`), `PhaseChanged` event, one-way decoupling between `TurnManager` and subscribers.
-- **Fog of War:** Passive per-player halo and cone detection with domain filtering, `onlyWhileSurfaced`, dead-ship exclusion, supercover Bresenham LOS (Phase 9A). Active cone scan is player-activated: `S` activates, `Q`/`E` rotate, `Enter` confirms. Active marks clear at End. `FogGrid` dual-layer (passive/active) state with no-downgrade upgrade logic.
-- **Combat:** `CombatResolver.ResolveAttack` with dead-check, charge-readiness, domain, nearest-cell range, fog gate, terrain line-of-fire (Phase 9B via `HasClearLineOfFire`), d20 resolution, and destroyed-ship cleanup. Every rejection logs its specific cause.
+- **Movement:** Dijkstra 8-direction pathfinding (`GridPathfinder`), provisional movement with keyboard and pointer/drag input, multi-ship atomic commit, Escape/C cancel. Space advances phase only when all previews are valid. Reachable-anchor Gizmo removed.
+- **Ships and data model:** `ShipInstance` (all runtime state including `hasAttackedThisPhase`), `ShipData` builders for Wolf, Athena, SwordFish, and Carrier. Weapon, defense, vision, and charge profiles all defined.
+- **Turns:** Five-phase cycle (`Move → Staging → Search → Battle → End`), `PhaseChanged` event, decoupled subscribers. Staging handles mine recharge and plane deploy-turn unlock; End handles plane fuel decrement and clears active marks.
+- **Fog of War:** Passive per-player halo and cone detection with domain filtering, `onlyWhileSurfaced`, dead-ship exclusion, supercover Bresenham LOS (Phase 9A). Active cone scan is player-activated: `S` activates, `Q`/`E` rotate, `Enter` confirms, enforced fleet limit of 1 scan per phase. Active marks clear at End. `FogGrid` dual-layer state. Sunk ship contact marks cleared via `ClearMarksForShip`. Visual differentiation between `Identified` (red cube) and `Marked` (orange contact); `revealAllInFog` toggle for dev testing; standalone halo Gizmo removed. Reconnaissance aircraft provide absolute halo vision (range 3, sees over terrain LOS).
+- **Combat:** `CombatResolver.ResolveAttack` with dead-check, turn/phase gate, single attack per ship limit (`hasAttackedThisPhase`), charge-readiness, domain, nearest-cell range, fog gate, terrain line-of-fire (Phase 9B via `HasClearLineOfFire`), d20 resolution, armor damage reduction (`ApplyArmor`), ammo deduction (`remaining--`), destroyed-ship occupancy cleanup, and contact mark removal. Every rejection logs its specific cause.
+- **AI:** Overhauled into an event-driven modular architecture (`AiController`, `AiTurnContext`, `AiEnemyMemory`, `AiActiveScanner`, `AIMovementPlanner1`, `AIAttackPlanner`, `AIScoring`). Controls all living Player B ships, tracks enemy positions and predicts targets across turns, executes 1 active cone scan per phase for the fleet, respects `hasAttackedThisPhase`, and attacks known targets by expected damage. (Legacy debt: movement execution still calls `GridManager.MoveShip`).
+- **Staging Actions:** Contact Mines (`SwordFishClass`, `M` key, 600 damage, 2-turn recharge). Reconnaissance Planes (`CarrierClass`, `P` key, launch range 4, selectable in Staging, Tab cycle, deploy-turn movement lock, undeploy `C` refunds sortie, fuel tick on End, halo vision range 3).
 - **Match foundation:** `MatchState`, `PlayerState`, `DeploymentService` (with `CanPlaceShip` validation).
 
-### In Progress
+### In Progress / Legacy Debt
 
-- **AI:** Moves and attacks for Player B's first ship only; ignores fog; uses legacy `MoveShip`. Planned fog-aware multi-ship behavior not yet built.
-- **Combat resolution:** Armor, defense saves, ammo consumption, recharge, and side effects are all data-defined but not executed.
-- **Active scan scope:** Player can activate a scan for the currently selected ship only; the plan calls for all living ships.
+- **AI movement execution:** `AIMovementPlanner1` currently executes moves via `GridManager.MoveShip` Chebyshev steps rather than provisional Dijkstra paths.
+- **Combat resolution:** Defense saving throws and side effects are defined in data profiles but not yet evaluated during attack resolution.
 
 ### Planned / Not Implemented
 
 - Win condition and game-over flow.
-- Player-facing fog and combat UI (health bars, phase indicator, weapon selector, scan overlay, fog visibility).
-- Staging actions (mines, planes, repair ship).
-- Player-controlled deployment.
-- Defense saving throws and side effect execution.
-- Recharge processing.
-- Ammo consumption.
-- Production art (no sprites, textures, prefabs, or models exist in the repository).
+- Player-facing UI (health bars, phase indicator, weapon selector, scan overlay, fog visibility, staging buttons).
+- Player-controlled deployment phase.
+- Production art (sprites, textures, prefabs, or models).
 
 ### Cleanup Candidates
 
 - **P0 (safe to remove now):** 2 items — `DebugRecomputeFog` [ContextMenu]; `Assets/_Recovery/` backup scenes (after build-settings verification).
-- **P1 (after current AI/combat implementation):** ~10 items — `TestShip`/`ObstructionShip` properties, legacy `MoveShip`, `AIController.CanFire`, `actedThisPhase` timing fix, `[AI]` logs, `TurnManager.LogState`, `FogManager` verbose scan logs, `CombatResolver` outcome logs, deployment `LogStatBlock` calls.
-- **P2 (final prototype sanitation):** ~8 items — `TestShipController` full class, `ShipInstance.LogStatBlock`, hardcoded roster/anchors, `TestMap.asset` relocation, stale documentation updates, SwordFish card completion.
+- **P1 (after current AI/combat implementation):** ~6 items — `TestShip`/`ObstructionShip` properties, legacy `MoveShip`, `TurnManager.LogState`, `FogManager` verbose scan logs, `CombatResolver` rejection logs, deployment `LogStatBlock` calls.
+- **P2 (final prototype sanitation):** ~6 items — `TestShipController` full class, `ShipInstance.LogStatBlock`, hardcoded roster/anchors, `TestMap.asset` relocation, stale documentation updates.
 - **P3 (optional quality improvements):** ~3 items — `Tile.IsValid` reserved flag, `ShipInstance.movementRange` default sentinel, `WeaponProfile` field ordering.
-- **Stage D (production replacement):** The entire `GridView` Gizmo system (7 drawing methods) must be replaced by production art and UI, not simply deleted.
-
-**Total cleanup candidates:** ~27 identified across all priorities.
+- **Stage D (production replacement):** The `GridView` Gizmo system (starting zones, terrain, sensor contacts, identified ships, provisional previews, cones, mines, planes) must be replaced by production art and UI.
 
 ### Highest-Risk Cleanup Items
 
-The following items would break the project if removed prematurely:
-
-1. **`GridManager.MoveShip`** — AI movement depends on it entirely. Removing it before `AIController` is rewritten would break Player B completely.
-2. **`GridManager.TestShip` / `ObstructionShip`** — Referenced in three places in `AIController`. Removing them before the AI rewrite would break both AI movement and attack target selection.
-3. **`ShipInstance.LogStatBlock`** — Called from `DeploymentService.DeployFleet` on every deployment. Removing it without also removing the call site would cause a compile error.
-4. **`GridView.DrawDebugCones` / `DrawDebugHalos`** — These are the only active scan preview and fog coverage visualizations. Removing them before production replacements exist would make fog and scan behavior completely invisible.
-5. **`TestShipController`** — This is the only Player A input path. Removing it before production input exists would make the human side unplayable.
+1. **`GridManager.MoveShip`** — AI movement execution currently depends on it. Removing it before `AIMovementPlanner1` migrates to `PreviewMove` would break Player B movement.
+2. **`ShipInstance.LogStatBlock`** — Called from `DeploymentService.DeployFleet` on every deployment. Removing it without also removing the call site would cause a compile error.
+3. **`TestShipController`** — This is the only Player A input path. Removing it before production input exists would make the human side unplayable.
+4. **`GridView.DrawDebugCones`** — Active scan preview visualization. Removing it before production scan overlay exists would make scanning preview invisible.
 
 ### Final Sanitation Goal
 
-After the full planned implementation is complete (fog-aware multi-ship AI, armor and defense resolution, ammo consumption, Phase 9B line-of-fire, win condition, production input, production art and UI), the repository should contain:
+After the full planned implementation is complete, the repository should contain:
 
 - No `TestShipController` class — replaced by a production input system.
-- No `AIController` Gizmo or console-log verification code — replaced by production-quality AI.
 - No `GridView` Gizmo-based rendering — replaced by sprite/model rendering, production fog overlay, and production movement/scan UI.
 - No hardcoded fleet roster or anchor values — replaced by a match/lobby or deployment phase.
-- No `Debug.Log` calls for game events (phase changes, attacks, fog scans) — replaced by production HUD and combat log.
+- No `Debug.Log` calls for game events — replaced by production HUD and combat log.
 - `GridManager` retains only gameplay authority code: board, occupancy, provisional movement, terrain, fog lifecycle wiring.
-- `CombatResolver` retains full combat resolution including armor, defense, ammo, recharge, and Phase 9B line-of-fire.
+- `CombatResolver` retains full combat resolution including armor, defense saving throws, side effects, ammo, recharge, and line-of-fire.
 - `VisionResolver` and `FogManager` retain fog logic; verbose scan logs are removed or suppressed.
 - `ShipData` either remains as hardcoded builders or is migrated to `ScriptableObject` assets in `Assets/Data/` when the number of ships justifies it.
+- AI utilizes provisional movement and full tactical planning across all phases.
