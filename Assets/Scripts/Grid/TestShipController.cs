@@ -431,6 +431,12 @@ public class TestShipController : MonoBehaviour
 
     private void HandleActiveScanInput(ShipInstance ship)
     {
+        // Cancel active scan preview if active ship changed
+        if (gridManager.ActiveScanPreview != null && gridManager.ActiveScanPreview.Ship != ship)
+        {
+            gridManager.CancelActiveScan();
+        }
+
         if (Input.GetKeyDown(KeyCode.S))
         {
             if (gridManager.ActivateActiveScan(ship))
@@ -440,6 +446,49 @@ public class TestShipController : MonoBehaviour
             else
             {
                 Debug.Log("Active scan activation rejected (fleet scan already used this phase, wrong phase, or no cone layer).");
+            }
+        }
+
+        // Mouse click or drag to rotate active scan direction
+        if (gridManager.ActiveScanPreview != null && Camera.main != null)
+        {
+            if (Input.GetMouseButton(0) || Input.GetMouseButton(1))
+            {
+                Vector2Int mouseCell = GetMouseGridCell();
+                Vector2Int origin = gridManager.ActiveScanPreview.Bow;
+                Vector2Int diff = mouseCell - origin;
+                if (diff == Vector2Int.zero)
+                {
+                    diff = mouseCell - ship.anchor;
+                }
+
+                if (diff != Vector2Int.zero)
+                {
+                    Vector2Int newForward;
+                    if (Mathf.Abs(diff.x) >= Mathf.Abs(diff.y))
+                    {
+                        newForward = diff.x > 0 ? Vector2Int.right : Vector2Int.left;
+                    }
+                    else
+                    {
+                        newForward = diff.y > 0 ? Vector2Int.up : Vector2Int.down;
+                    }
+
+                    gridManager.SetActiveScanForward(newForward);
+                }
+            }
+        }
+        else if (gridManager.ActiveScanPreview == null && Input.GetMouseButtonDown(0) && Camera.main != null)
+        {
+            // Clicking the active ship during Search phase activates the scan preview
+            Vector2Int clickedCell = GetMouseGridCell();
+            Tile clickedTile = gridManager.GetTile(clickedCell);
+            if (clickedTile?.Occupant == ship)
+            {
+                if (gridManager.ActivateActiveScan(ship))
+                {
+                    Debug.Log($"Active scan preview started for {ship.shipType}.");
+                }
             }
         }
 

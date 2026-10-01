@@ -556,6 +556,22 @@ public class GridManager : MonoBehaviour
         return RotateActiveScan(quarterTurns);
     }
 
+    public bool SetActiveScanForward(Vector2Int forward)
+    {
+        if (activeScanPreview == null || forward == Vector2Int.zero)
+        {
+            return false;
+        }
+
+        activeScanPreview.SetForward(forward);
+        return true;
+    }
+
+    public bool SetActiveScanForward(ShipInstance ship, Vector2Int forward)
+    {
+        return SetActiveScanForward(forward);
+    }
+
     public bool ConfirmActiveScan()
     {
         if (activeScanPreview == null || match == null)

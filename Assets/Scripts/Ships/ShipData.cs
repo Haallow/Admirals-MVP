@@ -378,6 +378,42 @@ public static class ShipData
         // --- Weapons ---
         ship.weapons = new List<WeaponProfile>
         {
+            new WeaponProfile(
+                id: "Deck Gun",
+                ammo: null,
+                weaponRange: 6,
+                targetDomain: DomainType.Surface,
+                rollTiers: new List<RollTier>
+                {
+                    new RollTier(1, 10, "Miss", 0),
+                    new RollTier(11, 20, "Direct Hit", 300),
+                }
+            ),
+
+            new WeaponProfile(
+                id: "Anti-Ship Missile",
+                ammo: 2,
+                weaponRange: 8,
+                targetDomain: DomainType.Surface,
+                rollTiers: new List<RollTier>
+                {
+                    new RollTier(1, 3, "Miss", 0),
+                    new RollTier(4, 17, "Direct Hit", 500),
+                    new RollTier(18, 20, "Catastrophic Hit", 750)
+                }
+            ),
+
+            new WeaponProfile(
+                id: "Anti-Submarine Rocket",
+                ammo: 2,
+                weaponRange: 8,
+                targetDomain: DomainType.SubSurface,
+                rollTiers: new List<RollTier>
+                {
+                    new RollTier(1, 5, "Miss", 0),
+                    new RollTier(6, 20, "Direct Hit", 600)
+                }
+            )
         };
 
         ship.defenses = new List<DefenseProfile>

@@ -8,6 +8,51 @@ update pass.
 
 ---
 
+
+## [Mouse Drag & Click Rotation for Active Scan]
+
+**Summary:**
+Added mouse drag and click location support for rotating/aiming the non-passive active scan cone in the Search phase:
+- While active scan preview is open, clicking or holding and dragging the mouse (left or right click) aims the cone in the nearest cardinal direction toward the cursor.
+- Clicking the active ship in Search phase when no scan is active opens the active scan preview.
+- Keyboard controls (`S` to activate, `Q`/`E` to rotate quarter-turns, `Enter`/`Space` to confirm, `Esc`/`C` to cancel) remain fully functional.
+
+**Modified files:**
+- `Assets/Scripts/FogOfWar/ActiveScanPreviewState.cs` — added `SetForward(Vector2Int)`
+- `Assets/Scripts/Grid/GridManager.cs` — added `SetActiveScanForward(Vector2Int)`
+- `Assets/Scripts/Grid/TestShipController.cs` — added mouse click/drag rotation and click-to-activate in `HandleActiveScanInput`
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Remove Passive Vision Halo Gizmo]
+
+**Summary:**
+Removed `DrawDebugHalos` from `GridView.OnDrawGizmos` and deleted the method, stopping the rendering of passive vision halo wireframe gizmos. Non-passive cone scan preview (`DrawDebugCones`) remains intact and active.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridView.cs` — removed `DrawDebugHalos()` call and method; preserved `DrawDebugCones()`
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Remove Ship Movement Range Gizmo]
+
+**Summary:**
+Removed `DrawMovementRanges` from `GridView.OnDrawGizmos`, which previously drew shaded cube and wireframe gizmos showing reachable movement anchors for provisional ship states.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridView.cs` — removed `DrawMovementRanges()` call and method
+
+**Debt introduced:**
+- None.
+
+---
+
 ## [Click-to-Select Active Ship]
 
 **Summary:**

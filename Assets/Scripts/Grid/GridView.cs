@@ -5,9 +5,9 @@ using UnityEngine;
 // never mutates it. Owns the visual-only settings (zone colors/width) since
 // nothing but drawing needs them.
 //
-// DrawDebugCones/DrawDebugHalos are no longer "debug" in the throwaway sense,
-// per the roadmap they're becoming the real toggleable fog/scan visualization.
-// Kept their original names for now; rename when the actual toggle UI lands.
+// DrawDebugCones is no longer "debug" in the throwaway sense,
+// per the roadmap it's becoming the real toggleable fog/scan visualization.
+// Kept its original name for now; rename when the actual toggle UI lands.
 public class GridView : MonoBehaviour
 {
     [SerializeField] private GridManager gridManager;
@@ -23,7 +23,6 @@ public class GridView : MonoBehaviour
 
         // TEMPORARY: Scene-view visualization only; does not affect gameplay state.
         DrawStartingZones();
-        DrawMovementRanges();
 
         foreach (var kvp in gridManager.AllTiles)
         {
@@ -44,42 +43,8 @@ public class GridView : MonoBehaviour
         // TEMPORARY: Preview-only rendering; authoritative ship placement remains unchanged.
         DrawProvisionalShips();
         DrawDebugCones();
-        DrawDebugHalos();
         DrawMines();
         DrawPlanes();
-    }
-
-    private void DrawMovementRanges()
-    {
-        // TEMPORARY: Shows reachable anchors to verify Dijkstra behavior in the Scene view.
-        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
-        {
-            HashSet<Vector2Int> reachable =
-                gridManager.CalculateReachablePreviewAnchors(state);
-            Color rangeColor = state.Ship.owner == PlayerId.PlayerA
-                ? new Color(0f, 0.8f, 1f, 0.18f)
-                : new Color(1f, 0.2f, 0.2f, 0.18f);
-
-            foreach (Vector2Int cell in reachable)
-            {
-                Vector3 worldPos = new Vector3(
-                    cell.x * gridManager.CellSize,
-                    cell.y * gridManager.CellSize,
-                    0f);
-                Gizmos.color = rangeColor;
-                Gizmos.DrawCube(
-                    worldPos,
-                    Vector3.one * gridManager.CellSize * 0.9f);
-                Gizmos.color = new Color(
-                    rangeColor.r,
-                    rangeColor.g,
-                    rangeColor.b,
-                    0.7f);
-                Gizmos.DrawWireCube(
-                    worldPos,
-                    Vector3.one * gridManager.CellSize * 0.92f);
-            }
-        }
     }
 
     private bool HasProvisionalPreview(ShipInstance ship)
@@ -188,67 +153,6 @@ public class GridView : MonoBehaviour
             Gizmos.DrawWireCube(
                 new Vector3(c.x * gridManager.CellSize, c.y * gridManager.CellSize, 0f),
                 Vector3.one * gridManager.CellSize * 0.9f);
-        }
-    }
-
-    private void DrawDebugHalos()
-    {
-        // TEMPORARY: Halo overlay is visualization only and does not calculate fog state.
-        // Uses the same hull-cell range and supercover LOS check as VisionResolver so
-        // the Gizmo matches the authoritative detection result.
-        // Clear cells: cyan wire. Terrain-blocked cells: dark red wire.
-        if (gridManager.Match == null) return;
-
-        Color clearColor   = new Color(0f,  0.8f, 1f,   1f);
-        Color blockedColor = new Color(0.6f, 0f,  0.05f, 0.7f);
-
-        foreach (var ship in gridManager.Match.AllShips())
-        {
-            foreach (var layer in ship.visionLayers)
-            {
-                if (!layer.isPassive || layer.shape != ShapeType.Halo) continue;
-
-                var sourceCells = ship.GetOccupiedCells();
-
-                for (int x = 0; x < gridManager.width; x++)
-                {
-                    for (int y = 0; y < gridManager.height; y++)
-                    {
-                        Vector2Int cell = new Vector2Int(x, y);
-
-                        // Range check: any hull cell within Chebyshev range qualifies,
-                        // matching VisionResolver.IsWithinHalo exactly.
-                        bool inRange = false;
-                        foreach (var src in sourceCells)
-                        {
-                            int dist = Mathf.Max(
-                                Mathf.Abs(cell.x - src.x),
-                                Mathf.Abs(cell.y - src.y));
-                            if (dist <= layer.range) { inRange = true; break; }
-                        }
-                        if (!inRange) continue;
-
-                        // LOS check: cell is clear when any hull source has an
-                        // unobstructed supercover Bresenham path to it.
-                        // Matches VisionResolver.IsVisibleFromAnySource.
-                        bool hasClears = false;
-                        foreach (var src in sourceCells)
-                        {
-                            if (!VisionResolver.TryGetFirstBlockingCell(
-                                    src, cell, gridManager, out _))
-                            {
-                                hasClears = true;
-                                break;
-                            }
-                        }
-
-                        Gizmos.color = hasClears ? clearColor : blockedColor;
-                        Gizmos.DrawWireCube(
-                            new Vector3(x * gridManager.CellSize, y * gridManager.CellSize, 0f),
-                            Vector3.one * gridManager.CellSize * 0.85f);
-                    }
-                }
-            }
         }
     }
 

@@ -34,4 +34,12 @@ public class ActiveScanPreviewState
                 : new Vector2Int(Forward.y, -Forward.x);
         }
     }
+
+    public void SetForward(Vector2Int newForward)
+    {
+        if (newForward != Vector2Int.zero)
+        {
+            Forward = newForward;
+        }
+    }
 }
