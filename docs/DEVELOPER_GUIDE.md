@@ -865,23 +865,26 @@ attack path is `CombatResolver.ResolveAttack`.
 The current validation order is:
 
 1. Reject a dead target (logs reason).
-2. Find the attacker's `ChargeState` by weapon id and require `IsReady` (logs reason).
-3. Require the weapon target domain to match the target domain or be `Both` (logs reason).
-4. Iterate all attacker occupied cells × all target occupied cells to find the
+2. Reject if the attacker has already attacked this Battle phase (`attacker.hasAttackedThisPhase`, logs reason). Each ship may only attack once per Battle phase.
+3. Reject if not currently in the Battle phase or not the attacker's turn (when `TurnManager` is present, logs reason).
+4. Find the attacker's `ChargeState` by weapon id and require `IsReady` (logs reason).
+5. Require the weapon target domain to match the target domain or be `Both` (logs reason).
+6. Iterate all attacker occupied cells × all target occupied cells to find the
    minimum Chebyshev distance and collect every in-range pair.
-5. Reject if weapon range is less than that minimum distance (logs reason).
-6. Call `IsTargetKnown` — reject if no target cell is in the attacker's fog.
-7. Call `HasClearLineOfFire` on the in-range pairs. At least one pair must have
+7. Reject if weapon range is less than that minimum distance (logs reason).
+8. Call `IsTargetKnown` — reject if no target cell is in the attacker's fog.
+9. Call `HasClearLineOfFire` on the in-range pairs. At least one pair must have
    a clear supercover Bresenham path through intermediate cells; only
    `Impassable` terrain blocks. Logs `BLOCKED_LINE_OF_FIRE` with attacker,
    weapon, target, pair, and first blocker when every pair is blocked.
-8. Roll one d20 with `RollWeapon`.
-9. Apply armor reduction via `ApplyArmor(result.damage, target.armor)`:
+10. Mark `attacker.hasAttackedThisPhase = true`. Once a ship fires its chosen weapon, it cannot attack again that phase.
+11. Roll one d20 with `RollWeapon`.
+12. Apply armor reduction via `ApplyArmor(result.damage, target.armor)`:
    `effectiveDamage = round(rawDamage * (1 - armor * 0.0015))`. Miss
    (`rawDamage == 0`) is unchanged. Non-zero results are clamped to minimum 1.
    The log shows both raw and reduced values.
-10. Subtract `effectiveDamage` from target health.
-11. If health reaches zero, remove the target from grid occupancy and its
+13. Subtract `effectiveDamage` from target health.
+14. If health reaches zero, clear fog marks for the destroyed target and remove it from grid occupancy and its
     owner's live `ships` list.
 
 `IsTargetKnown` gets the attacker's fog grid and returns true if any target
@@ -892,8 +895,9 @@ cells is detected.
 `ResolveAttack` now decrements `weaponCharge.remaining` after `RollWeapon`
 succeeds. The `-1` infinite sentinel is never touched. The console log includes
 remaining ammo after the shot. Once remaining reaches zero, `IsReady` returns
-false and subsequent shots are rejected at step 2. Armor, defenses, recharge,
-and side effects are not yet implemented. It returns `true` when resolution was
+false and subsequent shots are rejected at step 4. `hasAttackedThisPhase` is
+cleared for all ships by `GridManager.ResetShipAttackStates` on transition into
+`Phase.Battle` and `Phase.End`. It returns `true` when resolution was
 performed (including a d20 miss). It returns `false` on any rejection, with a
 log identifying the cause.
 

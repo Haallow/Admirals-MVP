@@ -8,6 +8,37 @@ update pass.
 
 ---
 
+## [One Attack Per Ship Per Battle Phase Limit]
+
+**Summary:**
+Implemented a rule restricting each ship to at most one attack per Battle phase:
+- Added `hasAttackedThisPhase` bool to `ShipInstance` to track whether a ship has fired during the active Battle phase.
+- Updated `CombatResolver.ResolveAttack`:
+  - Rejects attacks if `attacker.hasAttackedThisPhase` is already true.
+  - Rejects attacks if not currently in `Phase.Battle` or if not the attacking player's turn (when `TurnManager` is present).
+  - Sets `attacker.hasAttackedThisPhase = true` when all validations pass and the weapon fires (`RollWeapon`, ammo deduction).
+  - Added public `CanShipAttack(ShipInstance ship)` helper to query ship attack eligibility.
+- Updated `GridManager`:
+  - Exposed `TurnManager` property.
+  - Added `ResetShipAttackStates()` to reset `hasAttackedThisPhase = false` across all ships.
+  - Hooked `ResetShipAttackStates()` into `HandlePhaseChanged` on entry into `Phase.Battle` and `Phase.End`.
+- Updated `TestShipController.HandleAttackInput`:
+  - Added guard rejecting attacks if the selected ship has already attacked this Battle phase, while preserving friendly-ship click selection.
+
+**Modified files:**
+- `Assets/Scripts/Ships/ShipInstance.cs` — added `hasAttackedThisPhase` field
+- `Assets/Scripts/Combat/CombatResolver.cs` — enforced one-attack limit, phase/turn gate, and added `CanShipAttack`
+- `Assets/Scripts/Grid/GridManager.cs` — exposed `TurnManager`, added `ResetShipAttackStates` and wired phase hooks
+- `Assets/Scripts/Grid/TestShipController.cs` — added pre-attack guard for `ship.hasAttackedThisPhase`
+- `docs/DEVELOPER_GUIDE.md` — updated `CombatResolver.ResolveAttack` validation order
+- `docs/AGENTS.md` — updated operating model notes
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
 ## [Clear Marked Orange Contact on Ship Destruction]
 
 **Summary:**

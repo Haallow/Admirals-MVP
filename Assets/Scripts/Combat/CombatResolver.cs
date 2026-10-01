@@ -22,6 +22,27 @@ public class CombatResolver
             return false;
         }
 
+        if (attacker.hasAttackedThisPhase)
+        {
+            Debug.Log($"Attack rejected: {attacker.owner}'s {attacker.shipType} has already attacked this Battle phase.");
+            return false;
+        }
+
+        if (gridManager.TurnManager != null)
+        {
+            if (gridManager.TurnManager.CurrentPhase != Phase.Battle)
+            {
+                Debug.Log($"Attack rejected: attacks can only be made during Battle phase (current: {gridManager.TurnManager.CurrentPhase}).");
+                return false;
+            }
+
+            if (attacker.owner != gridManager.TurnManager.CurrentPlayer)
+            {
+                Debug.Log($"Attack rejected: it is not {attacker.owner}'s turn (current: {gridManager.TurnManager.CurrentPlayer}).");
+                return false;
+            }
+        }
+
         ChargeState weaponCharge = FindChargeState(attacker.weaponCharges, weapon.id);
         if (weaponCharge == null || !weaponCharge.IsReady)
         {
@@ -81,6 +102,9 @@ public class CombatResolver
                       $"target={target.owner} pair=({blockedA},{blockedT}) blocker={firstBlocker}");
             return false;
         }
+
+        // Mark the ship as having attacked this Battle phase. Each ship may only attack once per Battle phase.
+        attacker.hasAttackedThisPhase = true;
 
         RollTier result = RollWeapon(weapon);
 
@@ -194,5 +218,26 @@ public class CombatResolver
             if (fog.IsKnown(cell)) return true;
         }
         return false;
+    }
+
+    // Returns true if the ship is alive, has not yet attacked this Battle phase,
+    // and (if TurnManager is present) it is currently the Battle phase and this ship owner's turn.
+    public bool CanShipAttack(ShipInstance ship)
+    {
+        if (ship == null || ship.currentHealth <= 0 || ship.hasAttackedThisPhase)
+        {
+            return false;
+        }
+
+        if (gridManager.TurnManager != null)
+        {
+            if (gridManager.TurnManager.CurrentPhase != Phase.Battle ||
+                ship.owner != gridManager.TurnManager.CurrentPlayer)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

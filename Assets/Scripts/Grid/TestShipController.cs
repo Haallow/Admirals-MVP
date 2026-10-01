@@ -647,6 +647,12 @@ public class TestShipController : MonoBehaviour
             return;
         }
 
+        // Each ship can only attack once per Battle phase.
+        if (ship.hasAttackedThisPhase)
+        {
+            Debug.Log($"Attack rejected: {ship.owner}'s {ship.shipType} has already attacked this Battle phase.");
+            return;
+        }
 
         // selectedWeaponIndex was already bounds-checked in HandleWeaponSelection,
         // but re-check here too in case the active ship was switched (Tab) after

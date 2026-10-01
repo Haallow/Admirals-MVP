@@ -34,6 +34,7 @@ public class GridManager : MonoBehaviour
     public FogManager Fog { get; private set; }
     public CombatResolver Combat { get; private set; }
     public ActiveScanPreviewState ActiveScanPreview => activeScanPreview;
+    public TurnManager TurnManager => turnManager;
 
     private void Awake()
     {
@@ -867,8 +868,14 @@ public class GridManager : MonoBehaviour
             activeScanPreview = null;
             fleetScannedThisPhase = false;
         }
+        else if (newPhase == Phase.Battle)
+        {
+            // Resets per-ship attack tracking so each living ship can make one attack this Battle phase.
+            ResetShipAttackStates();
+        }
         else if (newPhase == Phase.End)
         {
+            ResetShipAttackStates();
             Fog.ClearAllActiveMarks();
             activeScanPreview = null;
             fleetScannedThisPhase = false;
@@ -910,4 +917,16 @@ public class GridManager : MonoBehaviour
         // Plane deployment is player-activated via DeployPlane(ship, cell).
     }
 
+    public void ResetShipAttackStates()
+    {
+        if (match == null) return;
+        foreach (ShipInstance ship in match.playerA.ships)
+        {
+            ship.hasAttackedThisPhase = false;
+        }
+        foreach (ShipInstance ship in match.playerB.ships)
+        {
+            ship.hasAttackedThisPhase = false;
+        }
+    }
 }

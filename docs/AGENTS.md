@@ -104,7 +104,8 @@ GridManager.HandlePhaseChanged()
   -> Search  -> Fog.RecomputeAllPassive(match)
               (active scan requires player activation via ActivateActiveScan /
                ConfirmActiveScan — it is not triggered automatically)
-  -> End     -> Fog.ClearAllActiveMarks()
+  -> Battle  -> ResetShipAttackStates() (each ship may fire at most once per Battle phase)
+  -> End     -> Fog.ClearAllActiveMarks(), ResetShipAttackStates(), tick recharge & plane fuel
 ```
 
 The event flow is one-way: `TurnManager` raises `PhaseChanged`, and subscribers
@@ -121,7 +122,7 @@ react without the turn system knowing about fog, ships, or the grid.
 - `TerrainType.cs`
   - Explicit normal, costly, and impassable terrain categories.
 - `CombatResolver.cs`
-  - Plain combat service for attack validation, d20 resolution, damage, and destruction cleanup.
+  - Plain combat service for attack validation (one attack per ship per Battle phase, turn/phase gating, range, fog, LOS), d20 resolution, damage, ammo deduction, and destruction cleanup.
 - `GridView.cs`
   - Visualization component for board, zone, cone, and halo Gizmos; it reads but does not mutate `GridManager` state.
 - `FootprintUtil.cs`
@@ -134,7 +135,7 @@ react without the turn system knowing about fog, ships, or the grid.
 ### `Assets/Scripts/Ships/`
 
 - `ShipInstance.cs`
-  - Runtime ship state for identity, placement, health, armor, current domain, profile definitions, and charge state.
+  - Runtime ship state for identity, placement, health, armor, current domain, profile definitions, charge state, and `hasAttackedThisPhase` combat tracking.
 - `ShipFactory.cs` / `ShipData.cs` / `ShipType.cs`
   - Hardcoded ship card definitions and factory creation flow.
 
