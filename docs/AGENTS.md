@@ -99,9 +99,12 @@ TurnManager.AdvancePhase()
 
 GridManager.HandlePhaseChanged()
   -> Move    -> snapshot provisional states for current player's ships
-  -> Staging -> confirm provisional movement atomically
-              (mine deployment: player activates via DeployMine during Staging)
-  -> Search  -> Fog.RecomputeAllPassive(match)
+  -> Staging -> confirm provisional movement atomically; snapshot plane positions
+              (mine deployment: player activates via DeployMine during Staging;
+               plane deployment via DeployPlane; click-select or Tab planes;
+               C key undeploys freshly deployed planes and refunds sortie;
+               plane movement locked on deploy turn, allowed in subsequent Staging phases via PreviewPlaneMove)
+  -> Search  -> Fog.RecomputeAllPassive(match), clear deployedThisTurn flags on acting player's planes
               (active scan requires player activation via ActivateActiveScan /
                ConfirmActiveScan — it is not triggered automatically)
   -> Battle  -> ResetShipAttackStates() (each ship may fire at most once per Battle phase)

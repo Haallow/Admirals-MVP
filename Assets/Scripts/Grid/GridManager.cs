@@ -389,11 +389,13 @@ public class GridManager : MonoBehaviour
             return false;
         }
 
-        // All checks passed â€” deploy.
-        // Planes do NOT check for ship occupancy â€” they fly over ships.
+        // All checks passed — deploy.
+        // Planes do NOT check for ship occupancy — they fly over ships.
         PlaneUnit plane = new PlaneUnit(
             ship.owner, targetCell, planeProfile.fuelTurns,
-            planeProfile.movementRange, planeProfile.visionRange);
+            planeProfile.movementRange, planeProfile.visionRange,
+            ship, planeProfile.id);
+        plane.deployedThisTurn = true;
         match.planes.Add(plane);
 
         planeCharge.remaining--;
@@ -409,13 +411,31 @@ public class GridManager : MonoBehaviour
         return true;
     }
 
-    // Previews a plane move during Move phase.
+    // Previews a plane move during Staging phase.
     // Validates Chebyshev distance from positionAtTurnStart.
     // Planes do not interact with tiles, exclusion zones, or other ships.
     public bool PreviewPlaneMove(PlaneUnit plane, Vector2Int candidatePosition)
     {
         if (plane == null)
         {
+            return false;
+        }
+
+        if (turnManager != null && turnManager.CurrentPhase != Phase.Staging)
+        {
+            Debug.Log($"[PLANE] Move rejected: planes can only move in the Staging phase (current: {turnManager.CurrentPhase}).");
+            return false;
+        }
+
+        if (turnManager != null && plane.owner != turnManager.CurrentPlayer)
+        {
+            Debug.Log($"[PLANE] Move rejected: it is not {plane.owner}'s turn.");
+            return false;
+        }
+
+        if (plane.deployedThisTurn)
+        {
+            Debug.Log("[PLANE] Move rejected: planes cannot move on the turn they are deployed (movement is allowed in the next Staging phase).");
             return false;
         }
 
@@ -442,6 +462,67 @@ public class GridManager : MonoBehaviour
     {
         if (plane == null) return;
         Debug.Log($"[PLANE] Plane move committed to {plane.position}.");
+    }
+
+    // Undeploys a plane that was deployed during the current Staging phase.
+    // Removes the plane from match.planes, refunds the sortie to the launch ship,
+    // and recomputes passive fog.
+    public bool UndeployPlane(PlaneUnit plane)
+    {
+        if (plane == null || match == null)
+        {
+            return false;
+        }
+
+        if (turnManager != null && turnManager.CurrentPhase != Phase.Staging)
+        {
+            Debug.Log("[PLANE] Undeploy rejected: can only undeploy during Staging phase.");
+            return false;
+        }
+
+        if (turnManager != null && plane.owner != turnManager.CurrentPlayer)
+        {
+            Debug.Log($"[PLANE] Undeploy rejected: not {plane.owner}'s turn.");
+            return false;
+        }
+
+        if (!plane.deployedThisTurn)
+        {
+            Debug.Log("[PLANE] Undeploy rejected: plane was deployed on a previous turn and cannot be undeployed.");
+            return false;
+        }
+
+        if (!match.planes.Contains(plane))
+        {
+            return false;
+        }
+
+        match.planes.Remove(plane);
+
+        // Refund sortie to launch ship
+        if (plane.launchedFrom != null)
+        {
+            foreach (ChargeState charge in plane.launchedFrom.planeCharges)
+            {
+                if (charge.profileId == plane.profileId)
+                {
+                    if (charge.maxCapacity == -1 || charge.remaining < charge.maxCapacity)
+                    {
+                        charge.remaining++;
+                    }
+                    Debug.Log($"[PLANE] Sortie refunded to {plane.launchedFrom.shipType}. Remaining: {charge.remaining}");
+                    break;
+                }
+            }
+        }
+
+        if (Fog != null)
+        {
+            Fog.RecomputeAllPassive(match);
+        }
+
+        Debug.Log($"[PLANE] Plane at {plane.position} undeployed.");
+        return true;
     }
 
     // Checks whether the given ship is standing on any mines after moving.
@@ -837,19 +918,6 @@ public class GridManager : MonoBehaviour
                     provisionalMoves[ship] = new ProvisionalMovementState(ship);
                 }
             }
-
-            if (match != null)
-            {
-                // Snapshot plane positions for movement range validation.
-                PlayerId actingPlayer = turnManager.CurrentPlayer;
-                foreach (PlaneUnit plane in match.planes)
-                {
-                    if (plane.owner == actingPlayer)
-                    {
-                        plane.positionAtTurnStart = plane.position;
-                    }
-                }
-            }
         }
         else if (newPhase == Phase.Staging)
         {
@@ -860,9 +928,34 @@ public class GridManager : MonoBehaviour
                     Debug.LogWarning("Provisional movement confirmation failed; no ships were moved.");
                 }
             }
+
+            if (match != null)
+            {
+                // Snapshot plane positions for movement range validation during Staging phase.
+                PlayerId actingPlayer = turnManager.CurrentPlayer;
+                foreach (PlaneUnit plane in match.planes)
+                {
+                    if (plane.owner == actingPlayer)
+                    {
+                        plane.positionAtTurnStart = plane.position;
+                    }
+                }
+            }
         }
         else if (newPhase == Phase.Search)
         {
+            if (match != null)
+            {
+                PlayerId actingPlayer = turnManager != null ? turnManager.CurrentPlayer : PlayerId.PlayerA;
+                foreach (PlaneUnit plane in match.planes)
+                {
+                    if (plane.owner == actingPlayer)
+                    {
+                        plane.deployedThisTurn = false;
+                    }
+                }
+            }
+
             // Passive vision remains automatic; active scans require player activation.
             Fog.RecomputeAllPassive(match);
             activeScanPreview = null;

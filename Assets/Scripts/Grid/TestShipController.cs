@@ -37,7 +37,10 @@ public class TestShipController : MonoBehaviour
                     Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
                     return;
                 }
+            }
 
+            if (turnManager.CurrentPhase == Phase.Staging)
+            {
                 if (gridManager.Match != null)
                 {
                     foreach (PlaneUnit p in gridManager.Match.planes)
@@ -82,73 +85,100 @@ public class TestShipController : MonoBehaviour
         //         provisionally moved away — this lets un-dragged ships be
         //         selected at their original tile in Move phase while still
         //         ignoring the vacated anchor cells of already-dragged ships.
-        if (Input.GetMouseButtonDown(0) && Camera.main != null)
+        if (Input.GetMouseButtonDown(0) && Camera.main != null && !planePlacementPending)
         {
             Vector2Int clickedCell = GetMouseGridCell();
-            ShipInstance clickedShip = null;
 
-            // Pass 1: provisional preview cells (always checked first).
-            foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+            // In Staging phase: planes are clickable to become active.
+            bool planeSelected = false;
+            if (turnManager.CurrentPhase == Phase.Staging && gridManager.Match != null)
             {
-                if (state.Ship.owner == PlayerId.PlayerA &&
-                    state.GetPreviewCells().Contains(clickedCell))
+                int pIndex = 0;
+                foreach (PlaneUnit p in gridManager.Match.planes)
                 {
-                    clickedShip = state.Ship;
-                    break;
+                    if (p.owner == PlayerId.PlayerA)
+                    {
+                        if (p.position == clickedCell)
+                        {
+                            isControllingPlane = true;
+                            currentPlaneIndex = pIndex;
+                            isDraggingMovement = false;
+                            planeSelected = true;
+                            Debug.Log($"[Click] Switched to plane {currentPlaneIndex} at {p.position}");
+                            break;
+                        }
+                        pIndex++;
+                    }
                 }
             }
 
-            // Pass 2: tile occupancy fallback.
-            // In Move phase only accept the occupant if it has no provisional
-            // state that already moved it away from this cell, so that vacated
-            // anchor cells of dragged ships cannot trigger a selection.
-            if (clickedShip == null)
+            if (!planeSelected)
             {
-                Tile clickedTile = gridManager.GetTile(clickedCell);
-                if (clickedTile?.Occupant != null &&
-                    clickedTile.Occupant.owner == PlayerId.PlayerA)
+                ShipInstance clickedShip = null;
+
+                // Pass 1: provisional preview cells (always checked first).
+                foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
                 {
-                    ShipInstance candidate = clickedTile.Occupant;
-                    bool movedAway = false;
-                    if (turnManager.CurrentPhase == Phase.Move)
+                    if (state.Ship.owner == PlayerId.PlayerA &&
+                        state.GetPreviewCells().Contains(clickedCell))
                     {
-                        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+                        clickedShip = state.Ship;
+                        break;
+                    }
+                }
+
+                // Pass 2: tile occupancy fallback.
+                // In Move phase only accept the occupant if it has no provisional
+                // state that already moved it away from this cell, so that vacated
+                // anchor cells of dragged ships cannot trigger a selection.
+                if (clickedShip == null)
+                {
+                    Tile clickedTile = gridManager.GetTile(clickedCell);
+                    if (clickedTile?.Occupant != null &&
+                        clickedTile.Occupant.owner == PlayerId.PlayerA)
+                    {
+                        ShipInstance candidate = clickedTile.Occupant;
+                        bool movedAway = false;
+                        if (turnManager.CurrentPhase == Phase.Move)
                         {
-                            if (state.Ship == candidate &&
-                                !state.GetPreviewCells().Contains(clickedCell))
+                            foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
                             {
-                                movedAway = true;
-                                break;
+                                if (state.Ship == candidate &&
+                                    !state.GetPreviewCells().Contains(clickedCell))
+                                {
+                                    movedAway = true;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    if (!movedAway)
-                    {
-                        clickedShip = candidate;
+                        if (!movedAway)
+                        {
+                            clickedShip = candidate;
+                        }
                     }
                 }
-            }
 
-            if (clickedShip != null)
-            {
-                int foundIndex = myShips.IndexOf(clickedShip);
-                if (foundIndex >= 0 && foundIndex != currentShipIndex)
+                if (clickedShip != null)
                 {
-                    currentShipIndex = foundIndex;
-                    selectedWeaponIndex = 0;
-                    isControllingPlane = false;
-                    // Cancel any in-progress drag so HandlePointerMovement cannot
-                    // treat this selection click as a drag-start on the new ship.
-                    isDraggingMovement = false;
-                    Debug.Log($"[Click] Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                    int foundIndex = myShips.IndexOf(clickedShip);
+                    if (foundIndex >= 0)
+                    {
+                        currentShipIndex = foundIndex;
+                        selectedWeaponIndex = 0;
+                        isControllingPlane = false;
+                        // Cancel any in-progress drag so HandlePointerMovement cannot
+                        // treat this selection click as a drag-start on the new ship.
+                        isDraggingMovement = false;
+                        Debug.Log($"[Click] Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                    }
                 }
             }
         }
 
         if (Input.GetKeyDown(KeyCode.Tab))
         {
-            // During Move phase, Tab cycles through ships then planes.
-            if (turnManager.CurrentPhase == Phase.Move)
+            // During Staging phase, Tab cycles through ships then planes.
+            if (turnManager.CurrentPhase == Phase.Staging)
             {
                 // Count living planes owned by PlayerA.
                 int planeCount = 0;
@@ -207,7 +237,7 @@ public class TestShipController : MonoBehaviour
             }
             else
             {
-                // Non-Move phases: standard ship cycling only.
+                // Non-Staging phases: standard ship cycling only.
                 currentShipIndex = (currentShipIndex + 1) % myShips.Count;
                 selectedWeaponIndex = 0;
                 isControllingPlane = false;
@@ -244,24 +274,17 @@ public class TestShipController : MonoBehaviour
                 currentPlaneIndex = 0;
             }
 
-            if (isControllingPlane)
+            // Domain toggle: submarine (WolfClass) only, only during Move phase when active.
+            if (ship.shipType == ShipType.WolfClass && Input.GetKeyDown(KeyCode.D))
             {
-                HandlePlaneMovementInput();
-            }
-            else
-            {
-                // Domain toggle: submarine (WolfClass) only, only during Move phase when active.
-                if (ship.shipType == ShipType.WolfClass && Input.GetKeyDown(KeyCode.D))
-                {
-                    ship.currentDomain = ship.currentDomain == DomainType.Surface
-                        ? DomainType.SubSurface
-                        : DomainType.Surface;
+                ship.currentDomain = ship.currentDomain == DomainType.Surface
+                    ? DomainType.SubSurface
+                    : DomainType.Surface;
 
-                    Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
-                }
-
-                HandleMoveInput(ship);
+                Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
             }
+
+            HandleMoveInput(ship);
         }
         else if (turnManager.CurrentPhase == Phase.Battle)
         {
@@ -274,7 +297,21 @@ public class TestShipController : MonoBehaviour
         }
         else if (turnManager.CurrentPhase == Phase.Staging)
         {
-            HandleStagingInput(ship);
+            if (lastPhaseSeen != Phase.Staging)
+            {
+                isControllingPlane = false;
+                currentPlaneIndex = 0;
+                planePlacementPending = false;
+            }
+
+            if (isControllingPlane)
+            {
+                HandlePlaneMovementInput();
+            }
+            else
+            {
+                HandleStagingInput(ship);
+            }
         }
 
         lastPhaseSeen = turnManager.CurrentPhase;
@@ -402,9 +439,19 @@ public class TestShipController : MonoBehaviour
             return;
         }
 
-        // C cancels / reverts plane move to start of turn
+        // C cancels: if the plane was deployed this turn, undeploy it. Otherwise revert move.
         if (Input.GetKeyDown(KeyCode.C))
         {
+            if (plane.deployedThisTurn)
+            {
+                if (gridManager.UndeployPlane(plane))
+                {
+                    isControllingPlane = false;
+                    currentPlaneIndex = 0;
+                    return;
+                }
+            }
+
             plane.position = plane.positionAtTurnStart;
             Debug.Log($"[PLANE] Plane reverted to turn start position: {plane.positionAtTurnStart}");
             return;
@@ -425,7 +472,34 @@ public class TestShipController : MonoBehaviour
         if (Input.GetMouseButtonDown(0))
         {
             Vector2Int clickedCell = GetMouseGridCell();
-            gridManager.PreviewPlaneMove(plane, clickedCell);
+            if (clickedCell != plane.position)
+            {
+                // Only move if not clicking a friendly ship or another friendly plane (which are selection targets)
+                bool isFriendlyShip = false;
+                Tile clickedTile = gridManager.GetTile(clickedCell);
+                if (clickedTile?.Occupant != null && clickedTile.Occupant.owner == plane.owner)
+                {
+                    isFriendlyShip = true;
+                }
+
+                bool isOtherFriendlyPlane = false;
+                if (gridManager.Match != null)
+                {
+                    foreach (PlaneUnit other in gridManager.Match.planes)
+                    {
+                        if (other != plane && other.owner == plane.owner && other.position == clickedCell)
+                        {
+                            isOtherFriendlyPlane = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!isFriendlyShip && !isOtherFriendlyPlane)
+                {
+                    gridManager.PreviewPlaneMove(plane, clickedCell);
+                }
+            }
         }
     }
 
@@ -537,7 +611,7 @@ public class TestShipController : MonoBehaviour
             Debug.Log("Plane placement mode: click a cell to deploy (or Esc to cancel).");
         }
 
-        if (planePlacementPending && (Input.GetKeyDown(KeyCode.Escape) || Input.GetMouseButtonDown(1)))
+        if (planePlacementPending && (Input.GetKeyDown(KeyCode.Escape) || Input.GetMouseButtonDown(1) || Input.GetKeyDown(KeyCode.C)))
         {
             planePlacementPending = false;
             Debug.Log("Plane placement mode cancelled.");
@@ -563,6 +637,26 @@ public class TestShipController : MonoBehaviour
             if (gridManager.DeployPlane(launchShip, cell))
             {
                 Debug.Log($"Plane deployed to {cell} from {launchShip.shipType}.");
+
+                // Immediately make the newly deployed plane active upon deploying
+                if (gridManager.Match != null)
+                {
+                    int pIndex = 0;
+                    foreach (PlaneUnit p in gridManager.Match.planes)
+                    {
+                        if (p.owner == PlayerId.PlayerA)
+                        {
+                            if (p.position == cell)
+                            {
+                                isControllingPlane = true;
+                                currentPlaneIndex = pIndex;
+                                Debug.Log($"[PLANE] Activated newly deployed plane {currentPlaneIndex} at {cell}. Movement locked until next Staging phase (C to undeploy).");
+                                break;
+                            }
+                            pIndex++;
+                        }
+                    }
+                }
             }
             // DeployMine / DeployPlane logs its own rejection reason on failure.
         }

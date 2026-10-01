@@ -8,6 +8,66 @@ update pass.
 
 ---
 
+## [Plane Staging Click Selection and Undeploy on Cancel]
+
+**Summary:**
+Added direct click-selection and undeploy functionality for reconnaissance planes in the Staging phase:
+- In `PlaneUnit.cs`:
+  - Added `ShipInstance launchedFrom`, `string profileId`, and `bool deployedThisTurn` fields to track the origin carrier and deployment lifecycle.
+- In `GridManager.cs`:
+  - `DeployPlane` passes `ship` and `planeProfile.id` to the `PlaneUnit` constructor and sets `deployedThisTurn = true`.
+  - `PreviewPlaneMove` enforces that planes cannot move on the turn they are placed (`if (plane.deployedThisTurn)` returns `false` and logs rejection); plane movement is only allowed starting in the next Staging phase.
+  - Added `UndeployPlane(PlaneUnit plane)`: verifies active Staging phase and turn ownership, ensures `plane.deployedThisTurn == true`, removes plane from `match.planes`, increments the launch ship's sortie `ChargeState.remaining` (capped at `maxCapacity`), and triggers `Fog.RecomputeAllPassive(match)`.
+  - In `HandlePhaseChanged`, cleared `deployedThisTurn = false` for the acting player's planes on entry to `Phase.Search`, ensuring planes cannot be undeployed in subsequent turns and unlocking movement for future Staging phases.
+- In `TestShipController.cs`:
+  - In `Update` during `Phase.Staging`, clicking a cell occupied by a friendly plane now activates and selects that plane (`isControllingPlane = true`, `currentPlaneIndex`).
+  - Added `KeyCode.C` handling during `planePlacementPending` to cancel plane placement mode.
+  - In `HandleStagingInput`, automatically activates newly deployed planes immediately upon deployment so they can be selected or undeployed right away.
+  - In `HandlePlaneMovementInput`:
+    - Pressing `KeyCode.C` on a plane deployed this turn calls `gridManager.UndeployPlane(plane)` to remove it and refund the sortie; on planes from prior turns, `C` reverts position to `positionAtTurnStart`.
+    - Left-clicking on friendly ships or other friendly planes does not move the active plane, allowing seamless unit selection switching.
+
+**Modified files:**
+- `Assets/Scripts/Combat/PlaneUnit.cs` — added `launchedFrom`, `profileId`, `deployedThisTurn`
+- `Assets/Scripts/Grid/GridManager.cs` — added `UndeployPlane` method and phase clearing in `HandlePhaseChanged`
+- `Assets/Scripts/Grid/TestShipController.cs` — click-selection for planes, immediate activation on deploy, and `C` undeploy/revert
+- `docs/DEVELOPER_GUIDE.md` — updated Staging phase description
+- `docs/AGENTS.md` — updated runtime flow
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Plane Movement Moved to Staging Phase]
+
+**Summary:**
+Configured reconnaissance planes to only move during the Staging phase instead of the Move phase:
+- In `PlaneUnit.cs`, updated the `positionAtTurnStart` comment to reflect movement range checks during the Staging phase.
+- In `GridManager.cs`:
+  - `PreviewPlaneMove` now enforces `Phase.Staging` (rejects attempts to move planes in any other phase) and checks player ownership.
+  - In `HandlePhaseChanged`, moved `plane.positionAtTurnStart` snapshotting from `Phase.Move` to `Phase.Staging`.
+- In `TestShipController.cs`:
+  - Space advance commits plane moves (`ConfirmPlaneMove`) when advancing from `Phase.Staging` rather than `Phase.Move`.
+  - Tab cycling switches between ships and planes only during `Phase.Staging`; in `Phase.Move` (and other phases), Tab only cycles ships.
+  - In `Update`, plane movement inputs (`HandlePlaneMovementInput`) are routed during `Phase.Staging` instead of `Phase.Move`.
+  - Clicking any friendly ship resets `isControllingPlane = false` to immediately return focus to ship control.
+- In `docs/DEVELOPER_GUIDE.md` & `docs/AGENTS.md`, updated the phase transition diagrams and descriptions.
+
+**Modified files:**
+- `Assets/Scripts/Combat/PlaneUnit.cs` — updated comment for Staging movement
+- `Assets/Scripts/Grid/GridManager.cs` — added phase gate in `PreviewPlaneMove` and moved snapshotting to `Phase.Staging`
+- `Assets/Scripts/Grid/TestShipController.cs` — routed plane selection, inputs, and confirmation to Staging phase
+- `docs/DEVELOPER_GUIDE.md` — updated phase transition diagram
+- `docs/AGENTS.md` — updated runtime flow
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
 ## [One Attack Per Ship Per Battle Phase Limit]
 
 **Summary:**
