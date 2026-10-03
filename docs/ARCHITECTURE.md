@@ -174,12 +174,15 @@ Player A Move
 
 `TurnManager.AdvancePhase()`:
 
-1. changes `CurrentPhase`,
-2. switches `CurrentPlayer` only after `End`,
-3. logs the new turn/phase state,
-4. raises `PhaseChanged`.
+1. asks generic `PhaseAdvanceRequested` guards whether the current phase may end,
+2. changes `CurrentPhase` when none reject,
+3. switches `CurrentPlayer` only after `End`,
+4. logs the new turn/phase state,
+5. raises `PhaseChanged`.
 
 Subscribers receive the **new** phase.
+The grid guard rejects an invalid Player A Move confirmation before Staging;
+the turn manager does not know the movement rules.
 
 The intended dependency direction is one-way:
 

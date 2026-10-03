@@ -15,6 +15,10 @@ public class TurnManager : MonoBehaviour
     // to know those systems exist.
     public event Action<Phase> PhaseChanged;
 
+    // Subscribers can reject leaving the current phase before it changes.
+    // TurnManager does not need to know which gameplay rule they validate.
+    public event Func<Phase, bool> PhaseAdvanceRequested;
+
     private void Start()
     {
         LogState();
@@ -22,6 +26,17 @@ public class TurnManager : MonoBehaviour
 
     public void AdvancePhase()
     {
+        if (PhaseAdvanceRequested != null)
+        {
+            foreach (Func<Phase, bool> guard in PhaseAdvanceRequested.GetInvocationList())
+            {
+                if (!guard(currentPhase))
+                {
+                    return;
+                }
+            }
+        }
+
         switch (currentPhase)
         {
             case Phase.Move:

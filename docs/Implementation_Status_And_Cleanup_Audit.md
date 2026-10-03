@@ -25,7 +25,7 @@ one of the five repeating battle phases.
 | --- | --- | --- | --- |
 | Grid and occupancy | IMPLEMENTED | `GridManager.tiles` stores `Tile.Occupant`; placement and mutation are in `GridManager`. | `CanPlaceShip` checks bounds and other ships, but not terrain passability or a deployment zone. |
 | Terrain and routes | IMPLEMENTED / LEGACY DEBT | `MapDefinition`, three terrain types, and read-only eight-direction weighted Dijkstra routes exist. | Legacy `MoveShip` still uses Chebyshev distance and does not charge terrain cost. |
-| Player A movement | IMPLEMENTED / PROTOTYPE | `PreviewMove`, provisional snapshots, full-footprint validation, and atomic confirmation; controller uses arrows, drag, Q/E, C, Space. | Escape is not a Move cancel key in current controller. Direct phase advance can bypass its confirm check. |
+| Player A movement | IMPLEMENTED / PROTOTYPE | `PreviewMove`, provisional snapshots, full-footprint validation, and atomic confirmation; controller uses arrows, drag, Q/E, Escape/C, and Space. | Escape/C discard uncommitted previews only. A phase-advance guard rejects an invalid Move confirmation before Staging. |
 | Pre-match deployment | PARTIALLY IMPLEMENTED / UNFINISHED | `DeploymentService` auto-places hardcoded rosters at hardcoded anchors using `CanPlaceShip`. | Player-controlled arrangement, authoritative zones, confirmation, and a pre-match lifecycle are absent. |
 | Turn cycle | IMPLEMENTED | `Move -> Staging -> Search -> Battle -> End`; player switches only at End to Move; `PhaseChanged` drives reactions. | No game-over transition or pending-defense interruption. |
 | Passive vision | IMPLEMENTED / KNOWN ISSUE | Per-player passive fog is recomputed at Search, at End, and on plane deploy/undeploy. | Intended always-current Absolute vision is not maintained after all relevant state changes. |
@@ -80,6 +80,15 @@ terrain cost, or provisional multi-ship confirmation. This distinction is
 scope**. New movement APIs should be reusable by a later AI or LAN command
 adapter, without requiring current AI implementation work.
 
+During Move, Escape or C clears every provisional ship preview and stops an
+active drag. Actual anchors and tile occupancy were never moved by preview,
+so this restores the Move-start formation. Space confirms valid previews
+before advancing; committed anchors are no longer cancelable in Staging.
+`TurnManager.PhaseAdvanceRequested` lets `GridManager` reject leaving Move
+when its read-only confirmation check fails. This also covers callers that
+invoke `AdvancePhase` directly. On a successful direct transition, the
+Staging phase handler performs the existing atomic confirmation.
+
 ### 2.2 Deployment: current setup and unfinished pre-match flow
 
 `GridManager.Start` builds these requested rosters:
@@ -114,8 +123,9 @@ adapter is outside this audit. Deployment must remain outside the
 
 ### 2.3 Turn phases and End lifecycle
 
-`TurnManager.AdvancePhase` changes the phase first, switches player only
-on End to Move, logs the state, then raises `PhaseChanged`. It has no
+`TurnManager.AdvancePhase` runs generic phase-advance guards, changes the
+phase if none reject, switches player only on End to Move, logs the state,
+then raises `PhaseChanged`. It has no
 occupancy, fog, combat, mine, or plane implementation. The sample scene
 references one serialized `TurnManager` from grid, human input, and AI;
 another `TurnManager` component is also serialized on the grid GameObject
@@ -124,7 +134,7 @@ and is not referenced by those fields.
 | Entered phase | Current `GridManager` reaction |
 | --- | --- |
 | Move | Clears provisional states; snapshots Player A's ships when A is acting. AI separately snapshots and moves B ships on its Move event. |
-| Staging | For A, calls provisional confirmation again and warns if it fails; snapshots the acting player's plane positions. Mine/plane deployment is an explicit action. |
+| Staging | For A, confirms any remaining valid provisional movement (normal Space input already committed it), then snapshots the acting player's plane positions. Mine/plane deployment is an explicit action. |
 | Search | Clears acting player's plane `deployedThisTurn` flags, recomputes both passive fog grids, resets active scan preview/limit. |
 | Battle | Resets live ships' per-phase attack flags. |
 | End | Resets attack flags, clears active marks and scan state, ticks acting player's `ShipInstance.TickRecharge`, decrements owned plane fuel and removes planes at zero, then recomputes passive fog. |
@@ -274,9 +284,9 @@ passive-vision issue.
 `TestShipController` is the only Player A input path in the sample
 scene. It polls Unity's legacy `Input`. Tab cycles ships and, during
 Staging, owned planes; clicking a friendly unit selects it. Move uses
-arrows/drag and Q/E previews, C clears all ship previews, D toggles an
-active Wolf's domain, and Space confirms then advances. Escape is not
-handled in Move; Enter is not a movement commit key. Staging uses M
+arrows/drag and Q/E previews, Escape/C clear all uncommitted ship previews,
+D toggles an active Wolf's domain, and Space confirms then advances.
+Enter is not a movement commit key. Staging uses M
 for a mine, P then click for a plane, and C on a selected new plane
 for undeploy/refund. Search uses S or clicking the selected ship to
 preview a scan, Q/E or mouse aiming, Enter to confirm, Escape/C to

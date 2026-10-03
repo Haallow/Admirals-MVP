@@ -41,10 +41,12 @@ evidence that a feature still works as described there.
 `CombatResolver`. `GridManager.Start` creates the two `PlayerState` objects,
 builds `MatchState`, calls `DeploymentService.DeployAll`, and subscribes to
 `TurnManager.PhaseChanged`. `AIController` subscribes in `OnEnable` and
-unsubscribes in `OnDisable`. `TurnManager.AdvancePhase` changes phase first,
-switches player only on End to Move, logs, then invokes subscribers with the
-new phase. A direct caller of `AdvancePhase` has no built-in Move validation;
-the prototype controller performs its own confirmation before calling it.
+unsubscribes in `OnDisable`. `TurnManager.AdvancePhase` asks generic guards
+whether the current phase may end, then changes phase, switches player only
+on End to Move, logs, and invokes subscribers with the new phase.
+`GridManager` guards Player A's Move exit with the same read-only validation
+used by movement confirmation, including direct phase advances. The
+prototype controller confirms movement before calling `AdvancePhase`.
 
 The cycle is `Move -> Staging -> Search -> Battle -> End -> next player's Move`.
 
@@ -102,8 +104,11 @@ not change ship anchors or occupancy. `ConfirmProvisionalMovement` validates
 all current candidates, rejects overlapping candidate footprints, removes
 their old occupancy, places all new footprints, resolves mines for the moved
 ships, and clears preview state. `CancelProvisionalMovement` clears all
-previews. Direct `AdvancePhase` can still enter Staging after a failed
-confirmation: the phase handler logs a warning but cannot reverse the phase.
+previews. Escape/C clear uncommitted previews and stop an active drag;
+authoritative anchors remain at their Move-start positions. After successful
+confirmation and entry to Staging, ship movement is committed and cannot be
+canceled. A direct `AdvancePhase` call is rejected before the transition if
+the remaining provisional state cannot be confirmed.
 
 `MoveShip`, still used by AI, is a separate distance-based path. It compares
 Chebyshev distance from `anchorAtTurnStart` to the requested anchor with
@@ -283,7 +288,7 @@ not general guarantees on direct service calls.
 | Context | Implemented input |
 | --- | --- |
 | Selection | Left-click a friendly ship's authoritative or relevant preview cell; Tab cycles Player A ships. During Staging, friendly planes can be clicked or reached by Tab after ships. |
-| Move | Arrows preview anchor movement; Q/E preview quarter-turn rotation; dragging from a selected ship's cell previews pointer movement. C clears **all** provisional moves. D toggles an active Wolf between Surface and SubSurface. Space confirms provisional movement and, on success, advances. Escape is not handled in this Move branch; Enter does not commit movement. |
+| Move | Arrows preview anchor movement; Q/E preview quarter-turn rotation; dragging from a selected ship's cell previews pointer movement. Escape/C clear **all** uncommitted provisional moves. D toggles an active Wolf between Surface and SubSurface. Space confirms provisional movement and, on success, advances. Enter does not commit movement. |
 | Staging ship | M requests stern mine deployment. P arms plane placement; next left-click requests deployment, using the selected carrier or the first available Player A carrier. Escape, C, or right-click cancels placement mode. |
 | Staging plane | A new plane becomes selected after placement but cannot move that turn. Arrows or a destination click call `PreviewPlaneMove` for older planes; C undeploys a newly launched plane or directly restores an older plane's start position. Space logs confirmation for owned planes and advances. |
 | Search | S or a click on the active ship opens a cone preview. Mouse hold/drag aims to a cardinal direction; Q/E rotates; Enter confirms; Escape/C cancels. Space confirms a pending preview, then advances. |

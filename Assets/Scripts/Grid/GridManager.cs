@@ -60,8 +60,34 @@ public class GridManager : MonoBehaviour
 
         if (turnManager != null)
         {
+            turnManager.PhaseAdvanceRequested += CanLeavePhase;
             turnManager.PhaseChanged += HandlePhaseChanged;
         }
+    }
+
+    private void OnDestroy()
+    {
+        if (turnManager != null)
+        {
+            turnManager.PhaseAdvanceRequested -= CanLeavePhase;
+            turnManager.PhaseChanged -= HandlePhaseChanged;
+        }
+    }
+
+    private bool CanLeavePhase(Phase currentPhase)
+    {
+        if (currentPhase != Phase.Move || turnManager.CurrentPlayer != PlayerId.PlayerA)
+        {
+            return true;
+        }
+
+        if (CanConfirmProvisionalMovement())
+        {
+            return true;
+        }
+
+        Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
+        return false;
     }
 
     private void BuildGrid()
@@ -702,33 +728,9 @@ public class GridManager : MonoBehaviour
 
     public bool ConfirmProvisionalMovement()
     {
-        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        if (!TryGetConfirmedCells(out Dictionary<ShipInstance, List<Vector2Int>> candidateCells))
         {
-            if (!state.IsValid || !IsValidConfirmationFootprint(state))
-            {
-                return false;
-            }
-        }
-
-        Dictionary<ShipInstance, List<Vector2Int>> candidateCells =
-            new Dictionary<ShipInstance, List<Vector2Int>>();
-        foreach (ProvisionalMovementState state in provisionalMoves.Values)
-        {
-            candidateCells[state.Ship] = state.GetPreviewCells();
-        }
-
-        foreach (KeyValuePair<ShipInstance, List<Vector2Int>> candidate in candidateCells)
-        {
-            foreach (Vector2Int cell in candidate.Value)
-            {
-                foreach (KeyValuePair<ShipInstance, List<Vector2Int>> other in candidateCells)
-                {
-                    if (candidate.Key != other.Key && other.Value.Contains(cell))
-                    {
-                        return false;
-                    }
-                }
-            }
+            return false;
         }
 
         foreach (ProvisionalMovementState state in provisionalMoves.Values)
@@ -754,6 +756,44 @@ public class GridManager : MonoBehaviour
         }
 
         provisionalMoves.Clear();
+        return true;
+    }
+
+    public bool CanConfirmProvisionalMovement()
+    {
+        return TryGetConfirmedCells(out _);
+    }
+
+    private bool TryGetConfirmedCells(out Dictionary<ShipInstance, List<Vector2Int>> candidateCells)
+    {
+        candidateCells = new Dictionary<ShipInstance, List<Vector2Int>>();
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            if (!state.IsValid || !IsValidConfirmationFootprint(state))
+            {
+                return false;
+            }
+        }
+
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            candidateCells[state.Ship] = state.GetPreviewCells();
+        }
+
+        foreach (KeyValuePair<ShipInstance, List<Vector2Int>> candidate in candidateCells)
+        {
+            foreach (Vector2Int cell in candidate.Value)
+            {
+                foreach (KeyValuePair<ShipInstance, List<Vector2Int>> other in candidateCells)
+                {
+                    if (candidate.Key != other.Key && other.Value.Contains(cell))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
         return true;
     }
 

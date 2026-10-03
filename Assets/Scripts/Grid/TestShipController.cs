@@ -319,9 +319,10 @@ public class TestShipController : MonoBehaviour
 
     private void HandleMoveInput(ShipInstance ship)
     {
-        if (Input.GetKeyDown(KeyCode.C))
+        if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.C))
         {
             gridManager.CancelProvisionalMovement();
+            isDraggingMovement = false;
             Debug.Log("Provisional movement cancelled; ships reverted to their movement-phase positions.");
             return;
         }
