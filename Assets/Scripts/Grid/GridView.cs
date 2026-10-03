@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 // Extracted from GridManager. Pure visualization, reads GridManager's data,
-// never mutates it. Owns the visual-only settings (zone colors/width) since
+// never mutates it. Owns the visual-only zone colors since
 // nothing but drawing needs them.
 //
 // DrawDebugCones is no longer "debug" in the throwaway sense,
@@ -12,8 +12,7 @@ public class GridView : MonoBehaviour
 {
     [SerializeField] private GridManager gridManager;
 
-    [Header("Starting Zones")]
-    [SerializeField] private int startingZoneWidth = 5;
+    [Header("Deployment Zones")]
     [SerializeField] private Color playerZoneColor = new Color(0f, 0.35f, 1f, 0.18f);
     [SerializeField] private Color enemyZoneColor = new Color(1f, 0.1f, 0.1f, 0.18f);
 
@@ -86,6 +85,7 @@ public class GridView : MonoBehaviour
         }
 
         // TEMPORARY: Preview-only rendering; authoritative ship placement remains unchanged.
+        DrawDeploymentDrafts();
         DrawProvisionalShips();
         DrawDebugCones();
         DrawMines();
@@ -169,23 +169,29 @@ public class GridView : MonoBehaviour
 
     private void DrawStartingZones()
     {
-        // TEMPORARY: Starting-zone overlay is for board inspection only.
-        int zoneWidth = Mathf.Clamp(startingZoneWidth, 0, gridManager.width / 2);
-
-        for (int x = 0; x < gridManager.width; x++)
+        if (gridManager.Map == null) return;
+        foreach (MapDeploymentZone zone in gridManager.Map.DeploymentZones)
         {
-            bool isPlayerZone = x < zoneWidth;
-            bool isEnemyZone = x >= gridManager.width - zoneWidth;
-
-            if (!isPlayerZone && !isEnemyZone) continue;
-
-            Gizmos.color = isPlayerZone ? playerZoneColor : enemyZoneColor;
-
-            for (int y = 0; y < gridManager.height; y++)
+            string playerZone = gridManager.Deployment?.GetAssignedZone(PlayerId.PlayerA);
+            Gizmos.color = zone.id == playerZone ? playerZoneColor : enemyZoneColor;
+            foreach (RectInt region in zone.regions)
+            foreach (Vector2Int cell in region.allPositionsWithin)
             {
-                Vector3 worldPos = new Vector3(x * gridManager.CellSize, y * gridManager.CellSize, 0f);
+                Vector3 worldPos = new Vector3(cell.x * gridManager.CellSize, cell.y * gridManager.CellSize, 0f);
                 Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.98f);
             }
+        }
+    }
+
+    private void DrawDeploymentDrafts()
+    {
+        if (gridManager.Deployment == null || gridManager.Deployment.IsComplete) return;
+        Gizmos.color = Color.cyan;
+        foreach (DeploymentDraft draft in gridManager.Deployment.GetVisibleDrafts(PlayerId.PlayerA, PlayerId.PlayerA))
+        foreach (Vector2Int cell in draft.Cells)
+        {
+            Vector3 center = new Vector3(cell.x * gridManager.CellSize, cell.y * gridManager.CellSize, 0f);
+            Gizmos.DrawCube(center, Vector3.one * gridManager.CellSize * 0.72f);
         }
     }
 

@@ -22,6 +22,7 @@ For the deeper system map and runtime flow, see [`docs/ARCHITECTURE.md`](docs/AR
 - `GridView` reads state and renders board/fog/scan Gizmos; it must not become a gameplay authority.
 - Fog is tracked separately for Player A and Player B.
 - The phase cycle is `Move -> Staging -> Search -> Battle -> End`.
+- Match setup binds players to neutral map deployment zones. Player A drafts its roster manually; a deterministic local routine drafts Player B. Both formations commit together before the first Move phase.
 - Passive detection, active cone detection, fog attack gating, active-mark clearing, armor reduction, ammo deduction, mines, reconnaissance planes, and one-attack-per-ship gating are implemented.
 - AI decisions use fog knowledge/enemy memory, but AI movement execution still uses legacy `GridManager.MoveShip` rather than provisional/Dijkstra movement.
 

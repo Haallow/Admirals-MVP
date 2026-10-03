@@ -25,9 +25,20 @@ public class TestShipController : MonoBehaviour
     private bool planePlacementPending = false;
     private bool isControllingPlane = false;
     private int currentPlaneIndex = 0;
+    private int deploymentSlot;
+    private bool draggingDeployment;
+    private Vector2Int deploymentDragOffset;
+    private Vector2Int lastDeploymentDragCell;
 
     private void Update()
     {
+        if (gridManager == null || turnManager == null || gridManager.Match == null) return;
+        if (gridManager.Deployment == null || !gridManager.Deployment.IsComplete)
+        {
+            HandleDeploymentInput();
+            return;
+        }
+
         if (Input.GetKeyDown(KeyCode.Space))
         {
             if (turnManager.CurrentPhase == Phase.Move)
@@ -315,6 +326,99 @@ public class TestShipController : MonoBehaviour
         }
 
         lastPhaseSeen = turnManager.CurrentPhase;
+    }
+
+    private void HandleDeploymentInput()
+    {
+        DeploymentService deployment = gridManager.Deployment;
+        if (deployment == null || !deployment.IsValid || Camera.main == null) return;
+        if (deployment.IsConfirmed(PlayerId.PlayerA)) return;
+
+        int count = gridManager.Match.playerA.fleetRoster.Count;
+        if (count == 0) return;
+        deploymentSlot = Mathf.Clamp(deploymentSlot, 0, count - 1);
+        string zoneId = deployment.GetAssignedZone(PlayerId.PlayerA);
+
+        if (Input.GetKeyDown(KeyCode.Tab)) deploymentSlot = (deploymentSlot + 1) % count;
+        if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.C))
+            draggingDeployment = false;
+
+        if (Input.GetKeyDown(KeyCode.Q) || Input.GetKeyDown(KeyCode.E))
+        {
+            if (deployment.TryGetDraft(PlayerId.PlayerA, PlayerId.PlayerA, deploymentSlot, out DeploymentDraft draft))
+            {
+                int delta = Input.GetKeyDown(KeyCode.Q) ? -90 : 90;
+                int rotation = (draft.RotationDegrees + delta + 360) % 360;
+                if (!deployment.TryPlace(PlayerId.PlayerA, zoneId, deploymentSlot, draft.Anchor, rotation))
+                    Debug.Log("Deployment rotation rejected.");
+            }
+        }
+
+        // Keep the right screen panel's clicks out of board placement.
+        if (Input.GetMouseButtonDown(0) && Input.mousePosition.x < Screen.width - 230)
+        {
+            Vector2Int cell = GetMouseGridCell();
+            foreach (DeploymentDraft draft in deployment.GetVisibleDrafts(PlayerId.PlayerA, PlayerId.PlayerA))
+            foreach (Vector2Int draftCell in draft.Cells)
+            {
+                if (draftCell != cell) continue;
+                deploymentSlot = draft.RosterSlot;
+                draggingDeployment = true;
+                deploymentDragOffset = draft.Anchor - cell;
+                lastDeploymentDragCell = cell;
+                return;
+            }
+
+            int rotation = deployment.TryGetDraft(PlayerId.PlayerA, PlayerId.PlayerA,
+                deploymentSlot, out DeploymentDraft selected) ? selected.RotationDegrees : 0;
+            if (!deployment.TryPlace(PlayerId.PlayerA, zoneId, deploymentSlot, cell, rotation))
+                Debug.Log("Deployment placement rejected.");
+        }
+
+        if (draggingDeployment && Input.GetMouseButton(0))
+        {
+            Vector2Int cell = GetMouseGridCell();
+            if (cell != lastDeploymentDragCell)
+            {
+                lastDeploymentDragCell = cell;
+                if (deployment.TryGetDraft(PlayerId.PlayerA, PlayerId.PlayerA, deploymentSlot, out DeploymentDraft draft) &&
+                    !deployment.TryPlace(PlayerId.PlayerA, zoneId, deploymentSlot,
+                        cell + deploymentDragOffset, draft.RotationDegrees))
+                    Debug.Log("Deployment drag rejected.");
+            }
+        }
+        if (Input.GetMouseButtonUp(0)) draggingDeployment = false;
+    }
+
+    private void OnGUI()
+    {
+        if (gridManager == null || gridManager.Match == null || gridManager.Deployment == null ||
+            gridManager.Deployment.IsComplete) return;
+
+        GUILayout.BeginArea(new Rect(Screen.width - 223, 8, 215, 310), GUI.skin.box);
+        GUILayout.Label("Player A Deployment");
+        if (!gridManager.Deployment.IsValid)
+        {
+            GUILayout.Label("Map deployment zones are invalid.");
+        }
+        else
+        {
+            var roster = gridManager.Match.playerA.fleetRoster;
+            for (int slot = 0; slot < roster.Count; slot++)
+            {
+                bool placed = gridManager.Deployment.TryGetDraft(PlayerId.PlayerA, PlayerId.PlayerA, slot, out _);
+                if (GUILayout.Button($"{(slot == deploymentSlot ? "> " : "")}{roster[slot]} {(placed ? "Placed" : "Unplaced")}"))
+                    deploymentSlot = slot;
+            }
+            GUILayout.Label(gridManager.Deployment.IsConfirmed(PlayerId.PlayerB)
+                ? "Player B ready" : "Waiting for Player B");
+            GUILayout.Label("Click to place, drag to move, Q/E rotate.");
+            GUI.enabled = gridManager.Deployment.CanConfirm(PlayerId.PlayerA);
+            if (GUILayout.Button("Confirm Deployment"))
+                gridManager.ConfirmDeployment(PlayerId.PlayerA);
+            GUI.enabled = true;
+        }
+        GUILayout.EndArea();
     }
 
     private void HandleMoveInput(ShipInstance ship)

@@ -11,6 +11,8 @@ public class GridManager : MonoBehaviour
     [SerializeField] public int height = 15;
     [SerializeField] private float cellSize = 1f;
     [SerializeField] private MapDefinition mapDefinition;
+    [SerializeField] private string playerADeploymentZoneId = "west";
+    [SerializeField] private string playerBDeploymentZoneId = "east";
 
     [SerializeField] private TurnManager turnManager;
 
@@ -35,6 +37,8 @@ public class GridManager : MonoBehaviour
     public CombatResolver Combat { get; private set; }
     public ActiveScanPreviewState ActiveScanPreview => activeScanPreview;
     public TurnManager TurnManager => turnManager;
+    public DeploymentService Deployment { get; private set; }
+    public MapDefinition Map => mapDefinition;
 
     private void Awake()
     {
@@ -56,13 +60,23 @@ public class GridManager : MonoBehaviour
         var playerA = new PlayerState(PlayerId.PlayerA, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass, ShipType.SwordFishClass, ShipType.CarrierClass, ShipType.CruiserClass});
         var playerB = new PlayerState(PlayerId.PlayerB, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
         match = new MatchState(playerA, playerB);
-        DeploymentService.DeployAll(match, this);
-
         if (turnManager != null)
         {
             turnManager.PhaseAdvanceRequested += CanLeavePhase;
             turnManager.PhaseChanged += HandlePhaseChanged;
         }
+
+        Deployment = new DeploymentService(match, this, mapDefinition,
+            playerADeploymentZoneId, playerBDeploymentZoneId);
+        if (Deployment.IsValid && !Deployment.DraftPlayerB())
+            Debug.LogError("Player B's deterministic deployment could not place its full roster.");
+    }
+
+    public bool ConfirmDeployment(PlayerId player)
+    {
+        if (Deployment == null || !Deployment.Confirm(player)) return false;
+        if (Deployment.IsComplete) turnManager?.StartMatch();
+        return true;
     }
 
     private void OnDestroy()
@@ -76,6 +90,12 @@ public class GridManager : MonoBehaviour
 
     private bool CanLeavePhase(Phase currentPhase)
     {
+        if (Deployment == null || !Deployment.IsComplete)
+        {
+            Debug.LogWarning("Cannot advance phases before both formations are confirmed.");
+            return false;
+        }
+
         if (currentPhase != Phase.Move || turnManager.CurrentPlayer != PlayerId.PlayerA)
         {
             return true;
@@ -898,11 +918,12 @@ public class GridManager : MonoBehaviour
 
     public bool CanPlaceShip(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
     {
+        if (ship == null || candidateRotation % 90 != 0) return false;
         List<Vector2Int> candidateCells = FootprintUtil.GetWorldCells(candidateAnchor, ship.footprintOffsets, candidateRotation);
 
         foreach (var cell in candidateCells)
         {
-            if (!IsInBounds(cell))
+            if (!IsInBounds(cell) || !IsTerrainPassable(cell))
             {
                 return false;
             }

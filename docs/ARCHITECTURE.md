@@ -129,17 +129,13 @@ GridManager.Start()
   -> create PlayerState(PlayerA, roster)
   -> create PlayerState(PlayerB, roster)
   -> create MatchState(playerA, playerB)
-  -> DeploymentService.DeployAll(match, gridManager)
+  -> bind Player A and B to authored neutral MapDefinition zones
+  -> build Player B's deterministic legal draft
 ```
 
-`DeploymentService` creates ships from roster definitions, assigns their owner/placement, validates placement, and adds them to the runtime grid/match state.
+`DeploymentService` holds unoccupied drafts by player and roster slot. The Player A prototype controller places and rotates its roster, while the local Player B setup searches legal positions through the same API. Zone regions are authored in `MapDefinition` and assigned to players at match startup.
 
-Current deployment assumptions documented by the prototype:
-
-- Player A begins near `anchorX = 1`, facing `0` degrees.
-- Player B begins near `gridManager.width - 3`, facing `180` degrees.
-- Deployment checks `CanPlaceShip` before placement.
-- A ship that fails deployment validation is skipped with a warning rather than forced into invalid occupancy.
+Both full formations must be confirmed before any draft becomes a live ship or occupies a tile. Confirmation revalidates both formations, commits them together, and starts one Player A Move event. `TurnManager.AdvancePhase` is blocked until that start event.
 
 ---
 
@@ -623,9 +619,7 @@ The AI should call shared authoritative services for action execution rather tha
 
 `GridManager.Start` creates the two player states from the current roster setup.
 
-`DeploymentService.DeployAll` creates and places each roster entry using the ship factory and grid placement path.
-
-The deployment service should remain a setup/orchestration layer, with grid legality still owned by the grid system.
+`DeploymentService` validates full rotated footprints against the assigned map zone, passable terrain, occupancy, and other drafts. Callers use player IDs, zone IDs, and roster slots. The local deterministic Player B routine is in this service, outside the AI subsystem. Draft reads are scoped to the requesting player until deployment completes.
 
 ---
 

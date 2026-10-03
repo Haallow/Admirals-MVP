@@ -8,6 +8,7 @@ public class TurnManager : MonoBehaviour
 
     public PlayerId CurrentPlayer => currentPlayer;
     public Phase CurrentPhase => currentPhase;
+    public bool MatchStarted { get; private set; }
 
     // Fired every time AdvancePhase changes the phase. Anything that needs
     // to react to a phase transition (Fog, later Staging actions, later
@@ -19,13 +20,20 @@ public class TurnManager : MonoBehaviour
     // TurnManager does not need to know which gameplay rule they validate.
     public event Func<Phase, bool> PhaseAdvanceRequested;
 
-    private void Start()
+    public bool StartMatch()
     {
+        if (MatchStarted) return false;
+        currentPlayer = PlayerId.PlayerA;
+        currentPhase = Phase.Move;
+        MatchStarted = true;
         LogState();
+        PhaseChanged?.Invoke(currentPhase);
+        return true;
     }
 
     public void AdvancePhase()
     {
+        if (!MatchStarted) return;
         if (PhaseAdvanceRequested != null)
         {
             foreach (Func<Phase, bool> guard in PhaseAdvanceRequested.GetInvocationList())
