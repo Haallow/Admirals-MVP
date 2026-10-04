@@ -34,6 +34,7 @@ public class TestShipController : MonoBehaviour
     private void Update()
     {
         if (gridManager == null || turnManager == null || gridManager.Match == null) return;
+        if (gridManager.Match.Result != null) return;
         if (gridManager.Deployment == null || !gridManager.Deployment.IsComplete)
         {
             HandleDeploymentInput();
@@ -54,6 +55,7 @@ public class TestShipController : MonoBehaviour
                     Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
                     return;
                 }
+                if (gridManager.Match.Result != null) return;
             }
 
             if (turnManager.CurrentPhase == Phase.Staging)

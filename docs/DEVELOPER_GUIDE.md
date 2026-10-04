@@ -20,15 +20,16 @@ evidence that a feature still works as described there.
 - The playable presentation and input remain prototype level. `GridView`
   draws Gizmos; `TestShipController` uses Unity's legacy `Input` polling.
   There is no production fog shroud or ship art in this runtime path.
-- Defense profiles and charges exist, but combat does not roll defenses or
-  apply their side effects. There is no repair ship, win condition, or
-  game-over transition. The AI has no Staging actions for mines or planes.
+- Combat resolves chosen defenses and their successful side effects through
+  `CombatResolver`. There is no repair ship or production game-over
+  screen. Fleet elimination now produces a match result and Console summary.
+  The AI has no Staging actions for mines or planes.
 
 ## Ownership and runtime flow
 
 | Authority | Responsibility |
 | --- | --- |
-| `MatchState` and `PlayerState` | Own players, requested rosters, live ship lists, and the match's mine and plane lists. `AllShips()` builds a new aggregate list. |
+| `MatchState` and `PlayerState` | Own players, requested rosters, live ship lists, mines, planes, match result, and turn summaries. `AllShips()` builds a new aggregate list. |
 | `GridManager.tiles` | Authoritative ship occupancy by coordinate. `GridManager` builds the board, places/removes/moves ships, deploys mines and planes, owns provisional movement and scan previews, and reacts to phases. |
 | `ShipInstance` | Holds a ship's owner, card profiles, health, domain, anchor, rotation, footprint offsets, charge states, and per-Battle attack flag. Its occupied cells derive from the anchor, rotation, and offsets. |
 | `FogManager` / `FogGrid` | Own the two players' separate knowledge grids and their lifecycle. A `FogGrid` stores knowledge, not ships or occupancy. |
@@ -39,7 +40,8 @@ evidence that a feature still works as described there.
 
 `GridManager.Awake` builds tiles and creates `FogManager` and
 `CombatResolver`. `GridManager.Start` creates the two `PlayerState` objects,
-builds `MatchState`, calls `DeploymentService.DeployAll`, and subscribes to
+builds `MatchState`, initializes `DeploymentService`, drafts Player B's local
+formation, and subscribes to
 `TurnManager.PhaseChanged`. `AIController` subscribes in `OnEnable` and
 unsubscribes in `OnDisable`. `TurnManager.AdvancePhase` asks generic guards
 whether the current phase may end, then changes phase, switches player only
@@ -56,10 +58,12 @@ The cycle is `Move -> Staging -> Search -> Battle -> End -> next player's Move`.
 | Staging | For Player A, calls `ConfirmProvisionalMovement` again; snapshots the acting player's plane positions. | Player A may deploy mines/planes and move eligible planes. AI does no Staging action. |
 | Search | Clears the acting player's planes' `deployedThisTurn`, recomputes passive fog for both players, clears scan preview and fleet scan flag. | A scan requires explicit Player A input or the AI Search event. |
 | Battle | Resets all live ships' `hasAttackedThisPhase`. | Player A input or AI may request attacks. |
-| End | Resets attack flags, clears active fog marks and scan state, ticks the acting player's ship recharge and plane fuel, removes exhausted planes, then recomputes passive fog. | No win check. |
+| End | Resets attack flags, clears active fog marks and scan state, ticks the acting player's ship recharge and plane fuel, removes exhausted planes, refreshes passive fog, then snapshots and logs the turn summary. | Space starts the next player's Move unless the match has ended. |
 
-The starting Move phase is a serialized initial state, not a
-`PhaseChanged(Move)` event. `TestShipController` also snapshots Player A's
+Combat destruction and completed mine movement commits evaluate fleet elimination immediately. A result blocks subsequent commands and phase advances and records a partial final summary without End recharge or fuel ticks. If both fleets are lost in the same mine commit, the result is a draw. The prototype reports the result in the Console.
+
+The starting Move phase begins through `StartMatch` after both formations
+commit; it emits `PhaseChanged(Move)`. `TestShipController` also snapshots Player A's
 `anchorAtTurnStart` when it first observes Move.
 
 ## Grid, terrain, placement, and movement

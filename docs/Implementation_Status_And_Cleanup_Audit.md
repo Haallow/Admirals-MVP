@@ -16,26 +16,26 @@ Human input / AI / future LAN input
     -> authoritative match and board state
 ```
 
-Deployment in the intended design is a **one-time pre-match step**. It is not
+Deployment is a **one-time pre-match step**. It is not
 one of the five repeating battle phases.
 
 ## 1. Main status table
 
 | System | Classification | Current evidence | Required work or limit |
 | --- | --- | --- | --- |
-| Grid and occupancy | IMPLEMENTED | `GridManager.tiles` stores `Tile.Occupant`; placement and mutation are in `GridManager`. | `CanPlaceShip` checks bounds and other ships, but not terrain passability or a deployment zone. |
+| Grid and occupancy | IMPLEMENTED | `GridManager.tiles` stores `Tile.Occupant`; `CanPlaceShip` checks full-footprint bounds, passable terrain, and live occupancy. | Assigned deployment zones and draft collisions are checked by `DeploymentService` through the shared grid placement query. |
 | Terrain and routes | IMPLEMENTED / LEGACY DEBT | `MapDefinition`, three terrain types, and read-only eight-direction weighted Dijkstra routes exist. | Legacy `MoveShip` still uses Chebyshev distance and does not charge terrain cost. |
 | Player A movement | IMPLEMENTED / PROTOTYPE | `PreviewMove`, provisional snapshots, full-footprint validation, and atomic confirmation; controller uses arrows, drag, Q/E, Escape/C, and Space. | Escape/C discard uncommitted previews only. A phase-advance guard rejects an invalid Move confirmation before Staging. |
-| Pre-match deployment | PARTIALLY IMPLEMENTED / UNFINISHED | `DeploymentService` auto-places hardcoded rosters at hardcoded anchors using `CanPlaceShip`. | Player-controlled arrangement, authoritative zones, confirmation, and a pre-match lifecycle are absent. |
-| Turn cycle | IMPLEMENTED | `Move -> Staging -> Search -> Battle -> End`; player switches only at End to Move; `PhaseChanged` drives reactions. Pending defense blocks advancement. | No game-over transition. |
-| Passive vision | IMPLEMENTED / KNOWN ISSUE | Per-player passive fog is recomputed at Search, at End, and on plane deploy/undeploy. | Intended always-current Absolute vision is not maintained after all relevant state changes. |
+| Pre-match deployment | IMPLEMENTED / PROTOTYPE | `TestMap.asset` authors neutral west/east zones. `DeploymentService` stores private drafts by player and roster slot; Player A arranges and confirms, while a deterministic local routine drafts and confirms B through the same legality operations. Both formations commit atomically before `StartMatch`. | Prototype text/Gizmo UI; LAN transport and AI deployment strategy are future work. |
+| Turn cycle | IMPLEMENTED | `Move -> Staging -> Search -> Battle -> End`; player switches only at End to Move; `PhaseChanged` drives reactions. Pending defense and completed match results block advancement. | End still waits for Space. |
+| Passive vision | IMPLEMENTED | `GridManager.RefreshPassiveVision` rebuilds both players' passive fog after deployment, committed ship/plane movement, domain changes, plane removal, and ship destruction; Search and End also refresh it. Wolf Absolute Vision works in both domains. | Previews do not affect fog. Interactive Play mode verification remains outstanding. |
 | Active scan | IMPLEMENTED / PROTOTYPE | Explicit Search scan preview and confirmation, one confirmed fleet scan per Search phase, active marks clear at End. | Input and preview use keys/Gizmos. Mine reveal uses detected ship cells rather than all scanned cells. |
 | Combat attack | IMPLEMENTED | Battle/turn, one-attack, charge, domain, occupied-cell range, fog, and terrain LOS gates; d20, armor, ammo, death cleanup. `RequestAttack` / `SubmitDefense` return status and outcome; finalization emits an event. | Player B defense strategy remains automatic pass. |
 | Defensive Measures | IMPLEMENTED / PROTOTYPE | Ready domain-matching choices, saving throw, charge use, avoidance, and Crash Dive next-Move lock are resolved centrally. | Player A uses a keyboard prompt; AI defense strategy and LAN adapter remain future work. |
 | Mines | IMPLEMENTED / LIMITS | Staging stern deployment, 600 flat damage for the SwordFish card, trigger on moved footprint, charge recharge at End. | Trigger code does not filter mine owner; active scan reveal is limited as noted above. |
-| Recon planes | IMPLEMENTED / LIMITS | Carrier launch, Staging movement, passive Absolute halo, sortie refund for immediate undeploy, fuel expiry at End. | Launch rejects an Impassable destination although later movement crosses terrain; no plane combat. |
-| Match / win condition | UNFINISHED / REQUIRED | `MatchState` owns players, live ships, mines, and planes; dead ships leave occupancy and live roster. | No victory rule, central evaluator, game-over state, or result transition. |
-| End-phase / match statistics | UNFINISHED / REQUIRED | End clears active marks, resets attack flags, ticks ship recharge and owned plane fuel, removes expired planes, then recomputes passive fog. | No structured attack/hit/damage/defense/sinking statistics or turn summary. |
+| Recon planes | IMPLEMENTED / LIMITS | Carrier launch, separate Staging movement candidate, confirmation/cancel, passive Absolute halo, sortie refund for immediate undeploy, fuel expiry at End. | Launch rejects an Impassable destination although later movement crosses terrain; no plane combat. |
+| Match / win condition | IMPLEMENTED / PROTOTYPE | After combat death or a complete mine movement commit, loss of all live ships produces a winner or simultaneous-loss draw in `MatchState`; shared actions and phase advancement stop. | Fleet elimination is the only victory rule; there is no production game-over screen. |
+| End-phase / match statistics | IMPLEMENTED / PROTOTYPE | End clears active marks, ticks recharge and plane fuel, refreshes fog, then stores and logs a structured turn summary. Immediate victory stores a partial summary without End ticks. | Console presentation only; detailed event history and match analytics remain future work. |
 | Human input | PROTOTYPE / TEMPORARY | `TestShipController` polls legacy Unity `Input` for Player A, including deployment and defense prompts. | Production UI/commands remain absent. |
 | AI | IMPLEMENTED / PROTOTYPE | Player B is event-driven and uses fog-known enemies for target selection; movement execution uses `MoveShip`. Its Battle sequence pauses and resumes around Player A defense responses. | AI defense selection is not implemented; movement semantics still differ. |
 | Art, sprites, and tiles | REQUIRES VERIFICATION / NOT INTEGRATED | No image, sprite atlas, model, or prefab art files were found under this checkout's `Assets`; sample scene has `GridView`, not ship/tile renderers. | User-reported available art may be outside this checkout. Confirm its location in Unity/Inspector, then integrate as needed. |
@@ -56,9 +56,9 @@ least 2, and Impassable is untraversable and blocks vision/attack LOS.
 
 `ShipInstance` is a plain serializable runtime object. Its anchor,
 quarter-turn rotation, and footprint offsets derive occupied cells via
-`FootprintUtil`. `GridManager.CanPlaceShip` rejects out-of-bounds cells
-and cells occupied by another ship. It does not implement the previously
-documented one-tile exclusion zone, nor check passable terrain. No
+`FootprintUtil`. `GridManager.CanPlaceShip` rejects out-of-bounds,
+Impassable, and other-ship occupied footprint cells. It does not implement
+the previously documented one-tile exclusion zone. No
 controller or view should become a second placement authority.
 
 `GridPathfinder` computes read-only, eight-direction Dijkstra paths over
@@ -89,37 +89,31 @@ when its read-only confirmation check fails. This also covers callers that
 invoke `AdvancePhase` directly. On a successful direct transition, the
 Staging phase handler performs the existing atomic confirmation.
 
-### 2.2 Deployment: current setup and unfinished pre-match flow
+### 2.2 Deployment: current pre-match flow
 
 `GridManager.Start` builds these requested rosters:
 
-| Player | Cards in roster order | Auto-deployment |
+| Player | Cards in roster order | Setup |
 | --- | --- | --- |
-| A | Wolf, Athena, SwordFish, Carrier, Cruiser | X=1; Y starts at 1 and advances by 3 after each successful placement; rotation 0° |
-| B | Wolf, Athena | X=`width - 3`; same Y rule; rotation 180° |
+| A | Wolf, Athena, SwordFish, Carrier, Cruiser | Player arranges each slot in the assigned west zone with the text list, board click/drag, and Q/E rotation. |
+| B | Wolf, Athena | Local deterministic routine searches legal candidates in the assigned east zone and confirms the full formation. |
 
-`DeploymentService.DeployAll` creates each ship via `ShipFactory`,
-assigns owner and initial anchor, calls `CanPlaceShip`, writes occupancy,
-and appends a valid ship to its owner's live list. An invalid candidate is
-skipped with a warning. `PlayerState.fleetRoster` is requested card data;
-`PlayerState.ships` is the live deployed set.
+`TestMap.asset` defines nonoverlapping full-height five-column `west` and
+`east` zones. `MapDefinition` holds neutral zone IDs and rectangular regions;
+match setup validates zone geometry and binds each player to one distinct
+authored zone. `DeploymentService.TryPlace` and `CanPlace` address player,
+zone ID, roster slot, anchor, and rotation. They use `GridManager.CanPlaceShip`
+for the full footprint, then check the assigned zone and other drafts.
+Invalid requests retain the last legal draft. Drafts do not occupy tiles or
+enter `PlayerState.ships`; opposing drafts remain private until completion.
 
-**UNFINISHED / REQUIRED — Player-Controlled Deployment:** Provide a
-one-time pre-match state before the repeating Move cycle. The target human
-flow is a simple text list of the player's ships near that side of the map:
-select a ship name, place it in that player's legal zone, move/rotate it
-while arranging, then confirm all legal placements to start battle.
-`GridView.startingZoneWidth` currently controls only a blue/red Gizmo
-overlay; it is **not authoritative deployment-zone data**. No grid or
-match API currently defines a player's zone, checks a candidate against it,
-or holds a pending formation before confirmation.
-
-Keep zone definitions and legal placement queries in shared gameplay code,
-with command operations for preview/place/rotate/confirm. Human UI should
-only select and submit these commands. The same queries and commands should
-be callable later by AI deployment and LAN input; implementing either
-adapter is outside this audit. Deployment must remain outside the
-`Move -> Staging -> Search -> Battle -> End` loop.
+`DeploymentService.CanConfirm` requires every roster slot to be legal. Both
+players must confirm; it revalidates both formations before writing any ship
+to occupancy or the live lists. `GridManager.ConfirmDeployment` then refreshes
+passive vision and starts exactly one Player A Move. Phase advancement is
+blocked beforehand. The deterministic Player B routine lives in
+`DeploymentService` and calls the same legality query and placement command;
+it is local setup, not AI strategy. LAN transport is not implemented.
 
 ### 2.3 Turn phases and End lifecycle
 
@@ -134,35 +128,31 @@ and is not referenced by those fields.
 | Entered phase | Current `GridManager` reaction |
 | --- | --- |
 | Move | Clears provisional states; snapshots Player A's ships when A is acting. AI separately snapshots and moves B ships on its Move event. |
-| Staging | For A, confirms any remaining valid provisional movement (normal Space input already committed it), then snapshots the acting player's plane positions. Mine/plane deployment is an explicit action. |
+| Staging | For A, confirms any remaining valid provisional movement (normal Space input already committed it), then snapshots the acting player's plane positions. Mine/plane deployment is explicit; the controller commits owned plane previews before advancing from Staging. |
 | Search | Clears acting player's plane `deployedThisTurn` flags, recomputes both passive fog grids, resets active scan preview/limit. |
 | Battle | Resets live ships' per-phase attack flags. |
-| End | Resets attack flags, clears active marks and scan state, ticks acting player's `ShipInstance.TickRecharge`, decrements owned plane fuel and removes planes at zero, then recomputes passive fog. |
+| End | Resets attack flags, clears active marks and scan state, ticks acting player's recharge and plane fuel, removes exhausted planes, refreshes passive fog, then stores and logs one turn summary. Space advances to the next Move. |
 
 Mine recharge is at **End**, not Staging. `TickRecharge` decrements
 weapon and defense countdowns if set, but only mine charges call
 `Recharge` at zero in the current implementation. Plane sorties do not
 automatically recharge. The initial Move phase is a serialized initial
-state; it is not entered by a startup `PhaseChanged` call.
+state until both deployments commit; `TurnManager.StartMatch` then emits
+`PhaseChanged(Move)` once.
 
-**UNFINISHED / REQUIRED — Match / Win Condition:** There is no authoritative
-victory evaluator, game-over state, or transition. The exact victory rule
-is not established by checked-in source or the stated requirements and
-must be confirmed. A central match-result evaluator should consume live
-match state or structured outcomes after attacks, mines, and other causes
-of destruction. Do not scatter win checks through controllers, views, or
-each damage source, and do not put the rule inside `TurnManager`.
+`MatchState.Result` records a winner after the opponent loses every live
+ship, or a draw if both fleets are lost in one atomic mine commit. Combat
+checks after finalization and before `AttackFinalized` listeners run;
+movement checks after all triggered mines resolve. Terminal play blocks
+shared commands and phase advancement. It snapshots a partial final turn
+without applying End lifecycle ticks.
 
-**UNFINISHED / REQUIRED — End-Phase / Match Statistics:** Current combat
-and mine operations mutate state and log text; no structured event/result
-records or counters were found for attacks requested/resolved, hits,
-misses, damage dealt/received, defenses used, ships sunk, sink
-attribution, weapon/effect, or mine damage/kills. Future combat/match
-services should produce structured results with attacker, defender,
-source/effect, and outcome information. End can finalize and report a turn
-summary; a match-result system can use the same data for an end-game
-summary, HUD/console log, LAN synchronization/debugging, or replay tools.
-This is a requirement, not an existing End behavior.
+`MatchState.TurnSummaries` contains completed snapshots. Finalized attacks
+contribute hit/miss, damage, defense, and sink counts; mine triggers record
+damage and losses; End adds mine-charge restoration and plane expiry, then
+logs the summary. Rejected or pending attacks do not count. Full event
+history, production presentation, and additional victory rules remain
+future work.
 
 ### 2.4 Fog, passive vision, and active Search
 
@@ -175,28 +165,23 @@ surface-only restrictions, and supercover terrain LOS. It excludes
 Impassable intermediate cells; Normal and Costly are transparent. Plane
 Absolute halo vision ignores terrain LOS.
 
-Passive ship layers are rebuilt on Search entry. They are also rebuilt
-when a plane is deployed or undeployed, and at End after fuel changes.
+`GridManager.RefreshPassiveVision` asks `FogManager` to rebuild both
+players' passive layers immediately after the atomic deployment commit,
+confirmed provisional ship movement and rotation (after mine resolution),
+legacy `MoveShip`, a Wolf domain toggle or successful Crash Dive, plane
+deployment/confirmed movement/undeployment/fuel expiry, and combat or mine
+destruction. Search and End also refresh passive fog. The Wolf's passive
+Absolute layer detects both target domains while its source is surfaced
+or submerged. Other authored sensor restrictions still apply.
+
 Active scans are distinct Search actions: the player previews a cone and
 confirms, or the AI requests a scan on its Search event. Confirmation
 writes temporary Marked cells and uses one fleet scan for that Search
 phase. End clears both active layers. Destroyed-ship cell marks are
-cleared immediately through `FogManager.ClearMarksForShip`.
-
-**KNOWN ISSUE / REQUIRED — Passive Absolute Vision Lifecycle:** The
-intended rule is passive Absolute visibility at all times in Move,
-Staging, Search, Battle, and End. Current passive fog is **not** refreshed
-on every ship move/rotation, Wolf domain toggle, plane movement, or ship
-destruction; initial deployment also does not cause a passive refresh.
-The view simply reads the last stored fog state. Therefore an enemy
-inside valid current Absolute vision can remain unidentified, or a
-previously visible cell can remain stale, until another recompute.
-The correction belongs at relevant authoritative state-change paths
-with a shared fog refresh operation, preserving active scan as a
-Search-only explicit action. Include source/target movement, rotation,
-domain, deployment, plane lifecycle, and destruction in that lifecycle
-review. Do not move geometry into `FogGrid` or make the view recompute
-gameplay knowledge.
+cleared immediately through `FogManager.ClearMarksForShip`. A passive
+refresh resets only passive knowledge; active marks persist until End.
+Ship and plane previews do not change live positions or fog. `GridView`
+only renders current state and preview markers.
 
 **KNOWN ISSUE — Mine reveal:** `FogManager.RunActiveSearch` compares
 enemy mine positions with `VisionScanResult.DetectedCells`. That list
@@ -260,15 +245,16 @@ ships. The plane lives in `MatchState.planes`, not tile occupancy;
 deployment immediately recomputes passive fog. Planes cannot move on
 their deployment turn. In a later Staging, `PreviewPlaneMove` checks
 owner, phase, bounds, and Chebyshev distance from the Staging snapshot,
-then immediately mutates plane position; it does not check terrain,
-ships, or intermediate route. `ConfirmPlaneMove` only logs. A newly
+then stores a candidate separately from `PlaneUnit.position`; it does not
+check terrain, ships, or intermediate route. Invalid previews keep the last
+valid candidate. `ConfirmPlaneMove` rechecks and commits a valid candidate,
+then refreshes passive fog; cancel discards it. A newly
 deployed plane can be undeployed that Staging with a sortie refund.
 Fuel decreases at the owning player's End; zero-fuel planes are removed.
 
 The launch restriction and later terrain-independent movement should be
-reviewed as a gameplay rule. Plane movement currently does not refresh
-passive fog until a later lifecycle trigger, contributing to the
-passive-vision issue.
+reviewed as a gameplay rule. `GridView` and Player A selection show the
+candidate position, while vision uses the committed position.
 
 ### 2.7 Input, AI boundary, and rendering
 
@@ -279,7 +265,8 @@ arrows/drag and Q/E previews, Escape/C clear all uncommitted ship previews,
 D toggles an active Wolf's domain, and Space confirms then advances.
 Enter is not a movement commit key. Staging uses M
 for a mine, P then click for a plane, and C on a selected new plane
-for undeploy/refund. Search uses S or clicking the selected ship to
+for undeploy/refund or on an older plane to cancel its movement preview.
+Search uses S or clicking the selected ship to
 preview a scan, Q/E or mouse aiming, Enter to confirm, Escape/C to
 cancel, and Space to auto-confirm a pending preview before advancing.
 Battle uses 1/2/3 to select a weapon and click to request an attack.
@@ -306,10 +293,10 @@ light-orange contact cubes with gold wireframes, and Unknown enemy
 ships are hidden unless reveal mode is active. Own mines use yellow
 markers; enemy mines are otherwise hidden except for generic contact
 markers if their cell is Marked. Own planes are green diamonds;
-known enemy planes are magenta diamonds. Terrain, starting zones,
+known enemy planes are magenta diamonds. Terrain, authored zones,
 provisional footprints, and blocked/clear scan-cone cells also use
 Gizmos. `DrawDebugHalos` and `DrawMovementRanges` are absent.
-`GridView.startingZoneWidth` is presentation data only. The view
+`GridView` reads zone geometry and visible drafts from deployment state. The view
 reads Player A fog, not the current player's fog.
 
 ## 3. Art and asset integration
@@ -379,41 +366,40 @@ knowledge lifecycle, `VisionResolver` owns detection/LOS geometry, and
 request grid/combat actions. These boundaries can support later human,
 AI, and LAN adapters without a whole-project rewrite.
 
-**Specific boundary work required:**
+**Specific boundary work still required:**
 
-1. Add a shared pre-match deployment-zone definition and query/command
-   API; the current zone width is view-only.
-2. Extend combat with a pending-attack/defense choice and finalization
-   boundary, rather than implementing defense rolls in keyboard input.
-3. Refresh passive fog on authoritative state changes so views and
-   attack gating see current knowledge in every phase.
-4. Produce structured combat/mine results and central match evaluation.
-5. For future LAN use, introduce stable runtime entity/action IDs and
+1. Extend the current turn aggregates into detailed event history if replay,
+   analytics, or production match summaries require it.
+2. For future LAN use, introduce stable runtime entity/action IDs and
    serializable command/result data before sending commands over a
-   network. Current APIs and AI memory use in-process
+   network. Deployment requests already use player, zone ID, and roster
+   slot; movement and combat APIs and AI memory still use in-process
    `ShipInstance` references. This is a future networking prerequisite,
    not a request to implement networking now.
 
 The current controller duplicates a small pre-attack flag check, while
 `CombatResolver` remains the final authority. Avoid adding more
-input-specific legality paths. `CanPlaceShip` is the common placement
-check, but it needs deployment-zone policy for the intended pre-match
-flow. The existing AI has some planning checks for hypothetical attacks;
+input-specific legality paths. `CanPlaceShip` is the common footprint check;
+`DeploymentService` applies authored zone and draft-collision policy during
+pre-match setup. The existing AI has some planning checks for hypothetical
+attacks;
 its final requests still use `CombatResolver`.
 
 ## 5. Requires Unity runtime / Inspector verification
 
 - Run the sample scene to check actual input sequencing, Gizmo visibility,
+  deployment, passive vision before Search, plane preview/confirmation,
   scan rendering, and whether direct phase advances expose invalid
-  provisional state. Static source inspection establishes the code paths,
-  not their observed Play mode behavior.
+  provisional state. Source and EditMode checks establish code behavior,
+  not observed interactive Play mode behavior. An Untitled scene with only
+  Main Camera is not `Assets/Scenes/SampleScene.unity`.
 - Inspect the duplicate serialized `TurnManager` component on the grid
   GameObject. The grid, input, and AI references point to the separate
   component, but a Play mode check is needed for any side effect.
 - Locate the user-reported ship sprites, tile art, and other art if they
   are outside this checkout; verify Unity import settings and whether a
   different scene or branch integrates them.
-- Confirm design rules for victory, mine ownership/visibility,
+- Confirm any additional victory rules, mine ownership/visibility,
   defense timing and side effects, and plane launch terrain. Source
   reveals current behavior but does not settle intended rules.
 - Check any external or Inspector-only use of public compatibility
@@ -424,25 +410,20 @@ its final requests still use `CombatResolver`.
 ### Implemented
 
 The checked-in source has a 30 by 15 sample grid, authoritative ship
-occupancy, hardcoded fleet auto-deployment, weighted provisional Player A
-movement, five-phase turn events, per-player fog with passive and active
-detection, terrain LOS, attack validation/d20/armor/ammo/death cleanup,
+occupancy, authored deployment zones with Player A manual drafts and
+deterministic local Player B setup, atomic pre-match confirmation, weighted
+provisional Player A movement, five-phase turn events, per-player fog with
+always-current passive detection and explicit Search scans, terrain LOS,
+attack validation/d20/armor/ammo/death cleanup, responsive defenses,
 contact mines, reconnaissance planes, and a Player B AI command path.
-End currently handles attack-flag reset, active-mark cleanup, acting
-ship recharge, plane fuel/removal, and passive-fog recomputation.
+End handles attack-flag reset, active-mark cleanup, acting ship recharge,
+plane fuel/removal, passive-fog refresh, and a completed turn summary.
+Fleet elimination produces an immediate match result and partial summary.
 
 ### Unfinished / Required Next
 
-- Defensive measure selection, eligibility, roll, side-effect execution,
-  and attack finalization after a defender choice.
-- Player-controlled, one-time pre-match deployment with authoritative
-  legal zones and confirmation.
-- Correct passive Absolute vision after relevant state changes in every
-  phase, while keeping active scans specific to Search.
-- An authoritative win-condition/game-over flow; the victory rule needs
-  confirmation.
-- Structured turn/match combat events and statistics, including damage,
-  defenses, sink attribution, and mine outcomes.
+- Detailed event history, production result UI, and any victory rules beyond
+  fleet elimination.
 - Player-facing input, fog, scan, movement, ship/tile, mine, and plane
   presentation. No production ship/tile art is integrated in this
   checkout; reported external art needs location/import verification.
@@ -450,10 +431,10 @@ ship recharge, plane fuel/removal, and passive-fog recomputation.
 ### Known Debt — Outside Current Scope
 
 AI movement execution still uses legacy distance-based `MoveShip`
-semantics. AI-specific behavior, deployment, and movement migration are
-outside the current mechanics-development scope; shared mechanics APIs
-should be ready for a later AI adapter. Future LAN support will require
-stable runtime identifiers and serializable commands/results.
+semantics. Player B currently passes on defense; its strategy, deployment
+algorithm, and movement migration are outside this mechanics work. The
+local deterministic formation is not AI behavior. Future LAN support will
+require stable runtime identifiers and serializable commands/results.
 
 ### Cleanup / Handoff
 
@@ -465,7 +446,24 @@ shared services and views read-only.
 
 ### Requires Runtime / Inspector Verification
 
-Sample-scene input and Gizmo behavior, the duplicate `TurnManager`'s
-effect, external art availability/import, Inspector-only dependencies,
-and the unresolved victory/defense/mine/plane design rules need
-verification beyond static source inspection.
+Sample-scene input, deployment, passive-vision timing, plane previews and
+Gizmo behavior, the duplicate `TurnManager`'s effect, external art
+availability/import, Inspector-only dependencies, and the unresolved
+mine/plane design rules need verification beyond static source
+inspection.
+
+### Focused verification already performed
+
+The passive-vision change passed a C# build and seven temporary Unity
+EditMode tests covering Wolf vision in both domains, immediate legacy move
+and domain refresh, terrain LOS, ship and plane preview isolation, committed
+movement, and active-mark preservation. The temporary test files, folder,
+and metadata were removed after the run. Interactive Unity Play mode was
+not exercised for that change.
+
+The End-phase change passed a C# build and six isolated Unity EditMode tests
+covering lifecycle totals and one End summary, pending and rejected attacks,
+successful and failed defenses, immediate combat and legacy-mine victory,
+simultaneous mine draw, partial summaries without End ticks, and action/phase
+guards after game over. The isolated test project and outputs were removed.
+Interactive Unity Play mode was not exercised for this change.

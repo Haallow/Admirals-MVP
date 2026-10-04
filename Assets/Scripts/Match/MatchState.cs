@@ -16,6 +16,11 @@ public class MatchState
     // GridManager is authoritative for deploying, moving, and removing planes.
     public List<PlaneUnit> planes = new List<PlaneUnit>();
 
+    private readonly List<TurnSummary> turnSummaries = new List<TurnSummary>();
+    public IReadOnlyList<TurnSummary> TurnSummaries => turnSummaries.AsReadOnly();
+    public TurnSummary CurrentTurnSummary { get; private set; }
+    public MatchResult Result { get; private set; }
+
     public MatchState(PlayerState playerA, PlayerState playerB)
     {
         this.playerA = playerA;
@@ -25,6 +30,27 @@ public class MatchState
     public PlayerState GetPlayer(PlayerId id)
     {
         return id == PlayerId.PlayerA ? playerA : playerB;
+    }
+
+    internal void BeginTurn(PlayerId player)
+    {
+        if (Result == null && CurrentTurnSummary == null)
+            CurrentTurnSummary = new TurnSummary(turnSummaries.Count + 1, player);
+    }
+
+    internal TurnSummary CompleteTurn(bool partial)
+    {
+        if (CurrentTurnSummary == null) return null;
+        TurnSummary completed = CurrentTurnSummary.Snapshot(partial);
+        turnSummaries.Add(completed);
+        CurrentTurnSummary = null;
+        return completed;
+    }
+
+    internal void SetResult(PlayerId? winner)
+    {
+        if (Result == null)
+            Result = new MatchResult(winner, CurrentTurnSummary?.Number ?? turnSummaries.Count);
     }
 
     public List<ShipInstance> AllShips()

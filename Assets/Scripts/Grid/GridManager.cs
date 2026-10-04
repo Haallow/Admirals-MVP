@@ -76,7 +76,7 @@ public class GridManager : MonoBehaviour
 
     public bool ConfirmDeployment(PlayerId player)
     {
-        if (Deployment == null || !Deployment.Confirm(player)) return false;
+        if (match?.Result != null || Deployment == null || !Deployment.Confirm(player)) return false;
         if (Deployment.IsComplete)
         {
             RefreshPassiveVision();
@@ -91,9 +91,48 @@ public class GridManager : MonoBehaviour
             Fog.RecomputeAllPassive(match);
     }
 
+    // Combat calls this after all damage and death cleanup, before notifying AI listeners.
+    internal void RecordFinalizedAttack(AttackOutcome outcome)
+    {
+        if (match == null || outcome == null || match.Result != null) return;
+        match.BeginTurn(outcome.Attacker.owner);
+        TurnSummary summary = match.CurrentTurnSummary;
+        summary.Attacks++;
+        if (outcome.Avoided)
+            summary.DefensesAvoided++;
+        else if (outcome.Damage > 0)
+            summary.Hits++;
+        else
+            summary.Misses++;
+        if (outcome.DefenseId != null) summary.DefensesChosen++;
+        summary.CombatDamageDealt += outcome.Damage;
+        if (outcome.Target.currentHealth <= 0) summary.EnemyShipsSunk++;
+        EvaluateMatchResult();
+    }
+
+    private void EvaluateMatchResult()
+    {
+        if (match == null || match.Result != null || Deployment == null || !Deployment.IsComplete)
+            return;
+        bool aLost = match.playerA.ships.Count == 0;
+        bool bLost = match.playerB.ships.Count == 0;
+        if (!aLost && !bLost) return;
+
+        match.SetResult(aLost == bLost ? (PlayerId?)null : aLost ? PlayerId.PlayerB : PlayerId.PlayerA);
+        FinishTurn(true);
+        Debug.Log(match.Result.IsDraw ? "Match ended in a draw: both fleets were lost."
+            : $"Match over: {match.Result.Winner.Value} wins; opposing fleet eliminated.");
+    }
+
+    private void FinishTurn(bool partial)
+    {
+        TurnSummary summary = match?.CompleteTurn(partial);
+        if (summary != null) Debug.Log($"[TURN SUMMARY] {summary}");
+    }
+
     public bool TryToggleWolfDomain(ShipInstance ship)
     {
-        if (ship == null || match == null || turnManager == null ||
+        if (ship == null || match == null || match.Result != null || turnManager == null ||
             ship.shipType != ShipType.WolfClass || ship.currentHealth <= 0 ||
             !match.GetPlayer(ship.owner).ships.Contains(ship) ||
             turnManager.CurrentPhase != Phase.Move || turnManager.CurrentPlayer != ship.owner)
@@ -106,7 +145,7 @@ public class GridManager : MonoBehaviour
 
     internal void SetShipDomain(ShipInstance ship, DomainType domain)
     {
-        if (ship == null || ship.currentDomain == domain) return;
+        if (match?.Result != null || ship == null || ship.currentDomain == domain) return;
         ship.currentDomain = domain;
         RefreshPassiveVision();
     }
@@ -122,6 +161,7 @@ public class GridManager : MonoBehaviour
 
     private bool CanLeavePhase(Phase currentPhase)
     {
+        if (match?.Result != null) return false;
         if (Combat != null && Combat.HasPendingDefense)
         {
             Debug.LogWarning("Cannot advance phases while a defense response is pending.");
@@ -266,7 +306,7 @@ public class GridManager : MonoBehaviour
 
     public bool PreviewMove(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
     {
-        if (ship == null || ship.movementLockedThisMove)
+        if (match?.Result != null || ship == null || ship.movementLockedThisMove)
         {
             return false;
         }
@@ -299,7 +339,7 @@ public class GridManager : MonoBehaviour
     // Fails silently (with a log) if any validation check fails â€” no charge is spent.
     public bool DeployMine(ShipInstance ship)
     {
-        if (ship == null)
+        if (match?.Result != null || ship == null)
         {
             return false;
         }
@@ -405,7 +445,7 @@ public class GridManager : MonoBehaviour
     // Planes do NOT occupy tiles (they are airborne).
     public bool DeployPlane(ShipInstance ship, Vector2Int targetCell)
     {
-        if (ship == null)
+        if (match?.Result != null || ship == null)
         {
             return false;
         }
@@ -497,7 +537,7 @@ public class GridManager : MonoBehaviour
     // Planes do not interact with tiles, exclusion zones, or other ships.
     public bool PreviewPlaneMove(PlaneUnit plane, Vector2Int candidatePosition)
     {
-        if (plane == null || match == null || !match.planes.Contains(plane))
+        if (plane == null || match == null || match.Result != null || !match.planes.Contains(plane))
         {
             return false;
         }
@@ -553,7 +593,7 @@ public class GridManager : MonoBehaviour
     // Commits a validated preview; live plane position and vision change together.
     public bool ConfirmPlaneMove(PlaneUnit plane)
     {
-        if (plane == null || match == null || !match.planes.Contains(plane)) return false;
+        if (plane == null || match == null || match.Result != null || !match.planes.Contains(plane)) return false;
         if (!planeMovePreviews.TryGetValue(plane, out Vector2Int preview)) return true;
         if (turnManager == null || turnManager.CurrentPhase != Phase.Staging ||
             turnManager.CurrentPlayer != plane.owner || plane.deployedThisTurn ||
@@ -572,7 +612,7 @@ public class GridManager : MonoBehaviour
     // and recomputes passive fog.
     public bool UndeployPlane(PlaneUnit plane)
     {
-        if (plane == null || match == null)
+        if (plane == null || match == null || match.Result != null)
         {
             return false;
         }
@@ -667,10 +707,17 @@ public class GridManager : MonoBehaviour
 
         // Flat damage: bypasses armor and defenses per spec.
         ship.currentHealth -= totalDamage;
+        if (match.CurrentTurnSummary != null)
+        {
+            match.CurrentTurnSummary.MinesTriggered += triggered.Count;
+            match.CurrentTurnSummary.MineDamageTaken += totalDamage;
+        }
         Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} took {totalDamage} total mine damage. HP: {ship.currentHealth}/{ship.maxHealth}");
 
         if (ship.currentHealth <= 0)
         {
+            if (match.CurrentTurnSummary != null)
+                match.CurrentTurnSummary.ShipsLostToMines++;
             Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} destroyed by mine(s)!");
             // Clears passive and active fog marks for this ship so destroyed targets don't retain ghost contact markers.
             Fog?.ClearMarksForShip(ship);
@@ -686,7 +733,7 @@ public class GridManager : MonoBehaviour
     // omits it and keeps the original hull-facing behavior unchanged.
     public bool ActivateActiveScan(ShipInstance ship, Vector2Int? preferredForward = null)
     {
-        if (ship == null || ship.owner != turnManager.CurrentPlayer)
+        if (match?.Result != null || ship == null || ship.owner != turnManager.CurrentPlayer)
         {
             return false;
         }
@@ -727,7 +774,7 @@ public class GridManager : MonoBehaviour
 
     public bool RotateActiveScan(int quarterTurns)
     {
-        if (activeScanPreview == null || quarterTurns == 0)
+        if (match?.Result != null || activeScanPreview == null || quarterTurns == 0)
         {
             return false;
         }
@@ -743,7 +790,7 @@ public class GridManager : MonoBehaviour
 
     public bool SetActiveScanForward(Vector2Int forward)
     {
-        if (activeScanPreview == null || forward == Vector2Int.zero)
+        if (match?.Result != null || activeScanPreview == null || forward == Vector2Int.zero)
         {
             return false;
         }
@@ -759,7 +806,7 @@ public class GridManager : MonoBehaviour
 
     public bool ConfirmActiveScan()
     {
-        if (activeScanPreview == null || match == null)
+        if (activeScanPreview == null || match == null || match.Result != null)
         {
             return false;
         }
@@ -803,6 +850,7 @@ public class GridManager : MonoBehaviour
 
     public bool ConfirmProvisionalMovement()
     {
+        if (match?.Result != null) return false;
         if (!TryGetConfirmedCells(out Dictionary<ShipInstance, List<Vector2Int>> candidateCells))
         {
             return false;
@@ -833,6 +881,7 @@ public class GridManager : MonoBehaviour
 
         provisionalMoves.Clear();
         if (hadSnapshots) RefreshPassiveVision();
+        EvaluateMatchResult();
         return true;
     }
 
@@ -950,6 +999,7 @@ public class GridManager : MonoBehaviour
 
     public void PlaceShip(ShipInstance ship, List<Vector2Int> cells)
     {
+        if (match?.Result != null) return;
         foreach (var cell in cells)
         {
             Debug.Assert(IsInBounds(cell), $"Cell {cell} is out of bounds. Check ship data.");
@@ -963,6 +1013,7 @@ public class GridManager : MonoBehaviour
 
     public void RemoveShip(ShipInstance ship)
     {
+        if (match?.Result != null) return;
         foreach (var tile in tiles.Values)
         {
             if (tile.Occupant == ship)
@@ -1003,7 +1054,7 @@ public class GridManager : MonoBehaviour
 
     public bool MoveShip(ShipInstance ship, Vector2Int newAnchor, int newRotationDegrees)
     {
-        if (ship == null || ship.movementLockedThisMove) return false;
+        if (match?.Result != null || ship == null || ship.movementLockedThisMove) return false;
         int distance = DistanceBetween(ship.anchorAtTurnStart, newAnchor);
         if (distance > ship.movementRange)
         {
@@ -1023,13 +1074,16 @@ public class GridManager : MonoBehaviour
         PlaceShip(ship, ship.GetOccupiedCells());
         ResolveMinesFor(ship);
         RefreshPassiveVision();
+        EvaluateMatchResult();
         return true;
     }
 
     private void HandlePhaseChanged(Phase newPhase)
     {
+        if (match?.Result != null) return;
         if (newPhase == Phase.Move)
         {
+            match?.BeginTurn(turnManager.CurrentPlayer);
             provisionalMoves.Clear();
             if (match != null)
             {
@@ -1057,6 +1111,7 @@ public class GridManager : MonoBehaviour
                 {
                     Debug.LogWarning("Provisional movement confirmation failed; no ships were moved.");
                 }
+                if (match?.Result != null) return;
             }
 
             if (match != null)
@@ -1116,7 +1171,15 @@ public class GridManager : MonoBehaviour
 
                 foreach (ShipInstance ship in actingShips)
                 {
+                    int before = 0;
+                    foreach (ChargeState charge in ship.mineCharges)
+                        if (charge.remaining > 0) before += charge.remaining;
                     ship.TickRecharge();
+                    int after = 0;
+                    foreach (ChargeState charge in ship.mineCharges)
+                        if (charge.remaining > 0) after += charge.remaining;
+                    if (match.CurrentTurnSummary != null)
+                        match.CurrentTurnSummary.MineChargesRestored += after - before;
                 }
 
                 // Tick plane fuel for the acting player's planes.
@@ -1131,6 +1194,8 @@ public class GridManager : MonoBehaviour
 
                     if (plane.fuelRemaining <= 0)
                     {
+                        if (match.CurrentTurnSummary != null)
+                            match.CurrentTurnSummary.PlanesExpired++;
                         match.planes.RemoveAt(i);
                         planeMovePreviews.Remove(plane);
                         Debug.Log($"[PLANE] {plane.owner} plane at {plane.position} ran out of fuel and was removed.");
@@ -1139,6 +1204,7 @@ public class GridManager : MonoBehaviour
 
                 RefreshPassiveVision();
             }
+            FinishTurn(false);
         }
         // Staging: mine deployment is player-activated via DeployMine(ship).
         // Plane deployment is player-activated via DeployPlane(ship, cell).

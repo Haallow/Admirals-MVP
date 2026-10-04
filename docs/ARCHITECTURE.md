@@ -225,9 +225,12 @@ End
   -> clear active fog marks
   -> reset attack state as currently wired
   -> tick recharge/fuel lifecycle
+  -> snapshot and log the acting player's turn summary
 ```
 
 This event-driven flow should be preferred over adding `Update()` polling for phase transitions.
+
+`MatchState` stores a read-only match result and completed turn summaries. Finalized attacks and mine triggers feed the current summary; End adds recharge and plane-expiry counts, logs a snapshot, and still waits for Space before the next Move. Fleet elimination after combat or a complete mine movement commit instead records a partial summary and ends the match immediately. Simultaneous fleet loss is a draw. Shared commands and phase advancement reject further play after a result; `TurnManager` does not evaluate fleets.
 
 ---
 
@@ -821,7 +824,7 @@ AI ----------/
 
 The following are intentionally still prototype/incomplete areas:
 
-- no win-condition/game-over flow,
+- fleet elimination ends play; broader victory rules and production results UI are not implemented,
 - no Player B defense selection strategy or LAN defense adapter,
 - repair ship not implemented,
 - AI movement execution still legacy,

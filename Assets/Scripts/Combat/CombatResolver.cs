@@ -65,7 +65,8 @@ public class CombatResolver
 
     public AttackRequestStatus RequestAttack(ShipInstance attacker, ShipInstance target, WeaponProfile weapon)
     {
-        if (HasPendingDefense || gridManager.Match == null || attacker == null || target == null || weapon == null ||
+        if (HasPendingDefense || gridManager.Match == null || gridManager.Match.Result != null ||
+            attacker == null || target == null || weapon == null ||
             attacker.currentHealth <= 0 || attacker.owner == target.owner ||
             !gridManager.Match.GetPlayer(attacker.owner).ships.Contains(attacker) ||
             !gridManager.Match.GetPlayer(target.owner).ships.Contains(target) ||
@@ -183,7 +184,7 @@ public class CombatResolver
     public bool SubmitDefense(PlayerId defender, string defenseId, out AttackOutcome outcome)
     {
         outcome = null;
-        if (!HasPendingDefense || defender != pendingTarget.owner) return false;
+        if (!HasPendingDefense || gridManager.Match?.Result != null || defender != pendingTarget.owner) return false;
 
         DefenseProfile defense = null;
         ChargeState defenseCharge = null;
@@ -256,6 +257,7 @@ public class CombatResolver
         }
 
         outcome = new AttackOutcome(attacker, target, weapon, defenseId, avoided, effectiveDamage);
+        gridManager.RecordFinalizedAttack(outcome);
         AttackFinalized?.Invoke(outcome);
         return true;
     }
@@ -349,7 +351,8 @@ public class CombatResolver
     // and (if TurnManager is present) it is currently the Battle phase and this ship owner's turn.
     public bool CanShipAttack(ShipInstance ship)
     {
-        if (HasPendingDefense || ship == null || ship.currentHealth <= 0 || ship.hasAttackedThisPhase)
+        if (HasPendingDefense || gridManager.Match?.Result != null ||
+            ship == null || ship.currentHealth <= 0 || ship.hasAttackedThisPhase)
         {
             return false;
         }
