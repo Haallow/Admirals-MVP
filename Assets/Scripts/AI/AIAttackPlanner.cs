@@ -43,6 +43,7 @@ public static class AIAttackPlanner
         ShipInstance attacker,
         List<ShipInstance> knownEnemies,
         GridManager gridManager,
+        FleetStance stance,
         HashSet<ShipInstance> claimedTargets,
         out ShipInstance target,
         out WeaponProfile weapon)
@@ -73,7 +74,10 @@ public static class AIAttackPlanner
             }
             else if (claimedTargets != null && claimedTargets.Contains(enemy))
             {
-                score -= AlreadyClaimedPenalty;
+                // Stage 4: stance-aware focus fire
+                // Advance encourages piling on (light penalty), other stances spread fire
+                float penalty = stance == FleetStance.Advance ? 75f : AlreadyClaimedPenalty;
+                score -= penalty;
             }
 
             if (score > bestScore)

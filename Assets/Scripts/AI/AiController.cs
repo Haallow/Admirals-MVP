@@ -6,7 +6,8 @@ using UnityEngine;
 // This is the orchestrator only -- it wires phase events to decisions and
 // carries them out. The actual decision logic lives in:
 //   - AITurnContext      (roster + fog snapshot for a turn)
-//   - AIMovementPlanner  (where to move)
+//   - FleetCommander     (fleet-level strategy, stance, coordination)
+//   - AIMovementPlanner  (where to move, including formation terms)
 //   - AIAttackPlanner    (what to fire, at what)
 //   - AIScoring          (shared weapon-value math)
 // AIController itself should never grow scoring or fog logic -- if a new
@@ -16,6 +17,10 @@ public class AIController : MonoBehaviour
 {
     [SerializeField] private GridManager gridManager;
     [SerializeField] private TurnManager turnManager;
+
+    // Stage 2: central fleet strategy layer. Created lazily on the first
+    // phase event so it's fresh every match and never a static.
+    private FleetCommander fleetCommander;
 
     private void OnEnable()
     {
@@ -46,6 +51,13 @@ public class AIController : MonoBehaviour
             return; // not the AI's turn
         }
 
+        // Lazy-create the commander on the first phase event we handle,
+        // so it resets cleanly every play session without static state.
+        if (fleetCommander == null)
+        {
+            fleetCommander = new FleetCommander(gridManager, PlayerId.PlayerB);
+        }
+
         if (newPhase == Phase.Move)
         {
             AITurnContext context = AITurnContext.Build(gridManager, PlayerId.PlayerB);
@@ -56,6 +68,11 @@ public class AIController : MonoBehaviour
             // AIActiveScanPlanner. advanceTurn: true is the once-per-turn tick
             // that ages ships currently hidden from fog.
             AIEnemyMemory.Remember(PlayerId.PlayerB, context.EnemyShips, context.KnownEnemies, advanceTurn: true);
+
+            // Stage 2: evaluate fleet stance and snapshot once per turn.
+            // Dwell-time tracking and stance changes happen here, so the
+            // stance is stable for the whole Move phase.
+            FleetSnapshot snapshot = fleetCommander.Evaluate(context, debugForceStance);
 
             // CHANGE (AI Optimization Recommendations, item 2.3): tracks
             // which known enemies one of this side's ships has already
@@ -70,7 +87,7 @@ public class AIController : MonoBehaviour
             foreach (ShipInstance ship in context.MyShips)
             {
                 ship.anchorAtTurnStart = ship.anchor;
-                ExecuteMove(ship, context, claimedTargets);
+                ExecuteMove(ship, context, snapshot, claimedTargets);
             }
         }
         else if (newPhase == Phase.Battle)
@@ -82,6 +99,14 @@ public class AIController : MonoBehaviour
             // active scan) ran in between. Record it, but don't age hidden
             // ships again -- their clock only ticks once per turn, at Move.
             AIEnemyMemory.Remember(PlayerId.PlayerB, context.EnemyShips, context.KnownEnemies, advanceTurn: false);
+
+            // Stage 2: refresh contacts only. Stance changes and dwell-time
+            // ticks stay once-per-turn (at Move), so stances are stable and
+            // don't flip mid-turn when Battle sees something new.
+            FleetSnapshot snapshot = fleetCommander.RefreshContacts(context);
+
+            // Stage 4: prioritize targets for coordinated fire
+            List<ShipInstance> prioritizedTargets = fleetCommander.PrioritizeTargets(context.KnownEnemies, gridManager);
 
             // Same idea as the Move-phase set above, but tracking which
             // enemies have already been fired on this Battle phase. Kept
@@ -97,7 +122,7 @@ public class AIController : MonoBehaviour
                     continue; // may have been destroyed earlier this same phase
                 }
 
-                ExecuteAttack(ship, context, claimedTargets);
+                ExecuteAttack(ship, prioritizedTargets, snapshot, gridManager, claimedTargets);
             }
         }
         else if (newPhase == Phase.Search)
@@ -108,10 +133,10 @@ public class AIController : MonoBehaviour
         // Staging/End: no AI decision needed yet.
     }
 
-    private void ExecuteMove(ShipInstance aiShip, AITurnContext context, HashSet<ShipInstance> claimedTargets)
+    private void ExecuteMove(ShipInstance aiShip, AITurnContext context, FleetSnapshot snapshot, HashSet<ShipInstance> claimedTargets)
     {
         AIMovementPlanner.Decision decision =
-            AIMovementPlanner.ChooseDestination(aiShip, context, gridManager, claimedTargets);
+            AIMovementPlanner.ChooseDestination(aiShip, context, snapshot, gridManager, claimedTargets);
 
         if (gridManager.MoveShip(aiShip, decision.destination, aiShip.rotationDegrees))
         {
@@ -139,10 +164,10 @@ public class AIController : MonoBehaviour
     // Step 4: fog-aware and multi-enemy -- only ever targets an enemy the
     // AI's own fog currently knows about, matching AIMovementPlanner's
     // targeting logic.
-    private void ExecuteAttack(ShipInstance aiShip, AITurnContext context, HashSet<ShipInstance> claimedTargets)
+    private void ExecuteAttack(ShipInstance aiShip, List<ShipInstance> prioritizedTargets, FleetSnapshot snapshot, GridManager gridManager, HashSet<ShipInstance> claimedTargets)
     {
         if (!AIAttackPlanner.TryChooseTarget(
-                aiShip, context.KnownEnemies, gridManager, claimedTargets,
+                aiShip, prioritizedTargets, gridManager, snapshot.CurrentStance, claimedTargets,
                 out ShipInstance target, out WeaponProfile weapon))
         {
             Debug.Log($"[AI] {aiShip.shipType} has no known enemy in range this turn.");
@@ -162,6 +187,81 @@ public class AIController : MonoBehaviour
 
         float expectedValue = AIScoring.ExpectedValue(weapon);
         Debug.Log($"[AI] {aiShip.shipType} fired {weapon.id} at {target.shipType} (expected value {expectedValue:F1}): {(hit ? "resolved" : "rejected")}");
+    }
+
+
+    // ---- Debug Testing Helpers (Stage 3) ------------------------------------
+
+    private FleetStance? debugForceStance = null;
+
+    private void Update()
+    {
+        if (turnManager == null || turnManager.CurrentPlayer != PlayerId.PlayerB)
+            return;
+
+        // Debug hotkeys: force specific stances for testing
+        if (Input.GetKeyDown(KeyCode.Alpha1))
+        {
+            debugForceStance = FleetStance.Hunt;
+            Debug.Log("[AI][Debug] Forced stance: Hunt");
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha2))
+        {
+            debugForceStance = FleetStance.Advance;
+            Debug.Log("[AI][Debug] Forced stance: Advance");
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha3))
+        {
+            debugForceStance = FleetStance.Hold;
+            Debug.Log("[AI][Debug] Forced stance: Hold");
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha4))
+        {
+            debugForceStance = FleetStance.DefensiveFallback;
+            Debug.Log("[AI][Debug] Forced stance: DefensiveFallback");
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha5))
+        {
+            debugForceStance = FleetStance.Retreat;
+            Debug.Log("[AI][Debug] Forced stance: Retreat");
+        }
+        else if (Input.GetKeyDown(KeyCode.Alpha0))
+        {
+            debugForceStance = null;
+            Debug.Log("[AI][Debug] Released stance override (auto)");
+        }
+
+        // Debug: damage AI fleet for Retreat testing
+        if (Input.GetKeyDown(KeyCode.Minus))
+        {
+            if (gridManager != null && gridManager.Match != null)
+            {
+                foreach (ShipInstance ship in gridManager.Match.GetPlayer(PlayerId.PlayerB).ships)
+                {
+                    if (ship.currentHealth > 0)
+                    {
+                        ship.currentHealth = Mathf.Max(1, ship.currentHealth / 3);
+                        Debug.Log($"[AI][Debug] Damaged {ship.shipType} to {ship.currentHealth}/{ship.maxHealth} HP");
+                    }
+                }
+            }
+        }
+
+        // Debug: heal AI fleet
+        if (Input.GetKeyDown(KeyCode.Equals))
+        {
+            if (gridManager != null && gridManager.Match != null)
+            {
+                foreach (ShipInstance ship in gridManager.Match.GetPlayer(PlayerId.PlayerB).ships)
+                {
+                    if (ship.currentHealth > 0)
+                    {
+                        ship.currentHealth = ship.maxHealth;
+                        Debug.Log($"[AI][Debug] Healed {ship.shipType} to full HP");
+                    }
+                }
+            }
+        }
     }
 
     private void LogTurnContext(AITurnContext context)

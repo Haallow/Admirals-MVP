@@ -8,8 +8,16 @@ using UnityEngine;
 // prototype's greedy tile-scoring approach (kill bonus, danger-at-tile,
 // flee-to-safety), adapted to this game's reachable-cell pathfinding,
 // multi-cell footprints, and fog-gated (known-enemies-only) reasoning.
+//
+// Stage 2: formation and protection terms added. Per-tile scoring now
+// includes cohesion pull (toward fleet centroid, scaled by stance),
+// fragility pushback (high-fragility ships avoid closing with contacts),
+// and scout forward bonus (scouts move toward threats). These are additive
+// nudges on top of the existing attack/danger/kill scoring, not overrides.
 public static class AIMovementPlanner
 {
+    // Debug flag: set to true to log detailed tile scoring breakdown
+    private const bool DebugScoring = false;
     public struct Decision
     {
         public Vector2Int destination;
@@ -50,11 +58,37 @@ public static class AIMovementPlanner
     // still wins regardless of who else is already engaging that target.
     private const float AlreadyClaimedPenalty = 20f;
 
+    // Stage 2 formation weights: scaled as fractions of a ship's max health
+    // so they sit on the same scale as the attack/danger terms above.
+    // Cohesion pull nudges ships toward the fleet centroid; strength varies
+    // by stance (see GetCohesionMultiplier). Fragility pushback penalizes
+    // high-fragility ships for tiles that close with the nearest contact.
+    // Scout forward bonus rewards scouts for tiles that advance toward threats.
+    private const float CohesionBaseWeight = 8f;
+    private const float FragilityPushbackWeight = 12f;
+    private const float ScoutForwardWeight = 6f;
+    private const float FragilityThreshold = 0.6f;  // EffectiveFragility above this triggers pushback
+
+    // Stage 3 directional bias weights: nudge tile selection based on stance.
+    // Retreat/Fallback push away from contacts toward home. Advance pushes toward contacts.
+    // Hold has zero bias (defensive, maintain position).
+    private const float RetreatDirectionalWeight = 18f;
+    private const float FallbackDirectionalWeight = 10f;
+    private const float AdvanceDirectionalWeight = 10f;
+    private const float RetreatVariance = 4;  // Tiles spread within ±4 of home centroid
+
     // claimedTargets is the set of enemies one of THIS side's other ships
     // has already lined up on this same Move phase (see AiController). Pass
     // null, or an empty set, to opt out of deconfliction entirely.
+    //
+    // Stage 2: FleetSnapshot parameter added. Contains stance, centroid,
+    // roles, and contacts -- everything needed for formation scoring.
     public static Decision ChooseDestination(
-        ShipInstance self, AITurnContext context, GridManager gridManager, HashSet<ShipInstance> claimedTargets)
+        ShipInstance self,
+        AITurnContext context,
+        FleetSnapshot snapshot,
+        GridManager gridManager,
+        HashSet<ShipInstance> claimedTargets)
     {
         List<Vector2Int> candidates = GetPlaceableReachableTiles(self, gridManager);
 
@@ -67,6 +101,9 @@ public static class AIMovementPlanner
         {
             dangerByTile[tile] = DangerAtTile(tile, self, context, gridManager);
         }
+
+        // Stage 2: find this ship's member entry for role and fragility.
+        FleetMember member = FindMember(snapshot, self);
 
         float bestScore = float.NegativeInfinity;
         Vector2Int bestTile = self.anchor;
@@ -85,6 +122,13 @@ public static class AIMovementPlanner
 
                 bool alreadyClaimed = claimedTargets != null && claimedTargets.Contains(enemy);
                 float score = ScoreAttackFromTile(self, enemy, dangerByTile[tile], weapon, alreadyClaimed);
+
+                // Stage 2: add formation terms on top of the attack score.
+                score += ScoreFormationTerms(tile, self, member, snapshot, gridManager);
+
+                // Stage 3: add directional bias (stance-driven fleet movement).
+                score += ScoreDirectionalBias(tile, self, snapshot, gridManager);
+
                 if (score > bestScore)
                 {
                     bestScore = score;
@@ -108,16 +152,191 @@ public static class AIMovementPlanner
 
         if (bestTarget == null)
         {
-            // Nothing known and attackable -- close in on a known enemy if
-            // one exists, otherwise regroup toward the map's center rather
-            // than sitting still (AGENTS.md's planned AI behavior).
-            bestTile = context.KnownEnemies.Count > 0
-                ? ClosestTileToAnyEnemy(candidates, context.KnownEnemies, gridManager)
-                : ClosestTileToCenter(candidates, gridManager);
+            // Stage 3: Stance-aware fallback when no valid attack exists.
+            if (context.KnownEnemies.Count > 0)
+            {
+                bestTile = ClosestTileToAnyEnemy(candidates, context.KnownEnemies, gridManager, self, member, snapshot);
+            }
+            else if (snapshot.CurrentStance == FleetStance.Hunt)
+            {
+                // Hunt behavior: advance toward the opposite edge from home.
+                // Home is snapshot.HomeCentroid, map center is known, so the
+                // enemy's likely starting zone is the far side of center.
+                Vector2Int center = new Vector2Int(gridManager.width / 2, gridManager.height / 2);
+                Vector2Int towardEnemy = center + (center - snapshot.HomeCentroid);
+                bestTile = ClosestTileToPoint(candidates, towardEnemy, gridManager, self, member, snapshot);
+            }
+            else
+            {
+                // Defensive stances with no contact: regroup at center.
+                bestTile = ClosestTileToCenter(candidates, gridManager, self, member, snapshot);
+            }
         }
 
         return new Decision { destination = bestTile, likelyTarget = bestTarget, isFleeing = false };
     }
+
+    // ---- Formation scoring (Stage 2) ----------------------------------------
+
+    private static FleetMember FindMember(FleetSnapshot snapshot, ShipInstance ship)
+    {
+        foreach (FleetMember m in snapshot.Members)
+        {
+            if (m.Ship == ship)
+                return m;
+        }
+        // Ship not in the snapshot (destroyed mid-phase?) -- return a neutral fallback.
+        return new FleetMember
+        {
+            Ship = ship,
+            Role = FleetRole.Anchor,
+            StaticFragility = 0.5f,
+            HpFraction = 1f,
+            EffectiveFragility = 0.5f
+        };
+    }
+
+    private static float ScoreFormationTerms(
+        Vector2Int tile,
+        ShipInstance self,
+        FleetMember member,
+        FleetSnapshot snapshot,
+        GridManager gridManager)
+    {
+        float score = 0f;
+
+        // Cohesion: nudge toward the fleet centroid, scaled by stance.
+        float cohesionMult = GetCohesionMultiplier(snapshot.CurrentStance);
+        if (cohesionMult > 0f && snapshot.Members.Count > 1)
+        {
+            int distToCentroid = gridManager.DistanceBetween(tile, snapshot.FleetCentroid);
+            int currentDist = gridManager.DistanceBetween(self.anchor, snapshot.FleetCentroid);
+            int deltaTowardCentroid = currentDist - distToCentroid;  // positive = moving closer
+            float cohesionPull = deltaTowardCentroid * CohesionBaseWeight * cohesionMult;
+            score += cohesionPull;
+        }
+
+        // Fragility pushback: high-fragility ships penalized for closing with the nearest contact.
+        if (member.EffectiveFragility > FragilityThreshold && snapshot.NearestContact != null)
+        {
+            int currentDistToContact = NearestDistanceToContact(self.anchor, snapshot.NearestContact, gridManager);
+            int tileDistToContact = NearestDistanceToContact(tile, snapshot.NearestContact, gridManager);
+            int deltaTowardContact = currentDistToContact - tileDistToContact;  // positive = moving closer to threat
+            if (deltaTowardContact > 0)
+            {
+                float pushback = -deltaTowardContact * FragilityPushbackWeight;
+                score += pushback;
+            }
+        }
+
+        // Scout forward: scouts get a bonus for advancing toward the nearest contact.
+        if (member.Role == FleetRole.Scout && snapshot.NearestContact != null)
+        {
+            int currentDistToContact = NearestDistanceToContact(self.anchor, snapshot.NearestContact, gridManager);
+            int tileDistToContact = NearestDistanceToContact(tile, snapshot.NearestContact, gridManager);
+            int deltaTowardContact = currentDistToContact - tileDistToContact;  // positive = moving closer
+            if (deltaTowardContact > 0)
+            {
+                float forwardBonus = deltaTowardContact * ScoutForwardWeight;
+                score += forwardBonus;
+            }
+        }
+
+        return score;
+    }
+
+    // Stage 3: Directional bias based on stance. Nudges tile selection toward
+    // or away from contacts/home depending on strategic intent.
+    private static float ScoreDirectionalBias(
+        Vector2Int tile,
+        ShipInstance self,
+        FleetSnapshot snapshot,
+        GridManager gridManager)
+    {
+        FleetStance stance = snapshot.CurrentStance;
+
+        // Hold and Hunt have no directional bias (Hunt uses fallback logic instead)
+        if (stance == FleetStance.Hold || stance == FleetStance.Hunt)
+            return 0f;
+
+        // Need a contact for directional decisions
+        if (snapshot.NearestContact == null)
+            return 0f;
+
+        Vector2Int contactCentroid = snapshot.NearestContact.Centroid;
+        int currentDistToContact = gridManager.DistanceBetween(self.anchor, contactCentroid);
+        int tileDistToContact = gridManager.DistanceBetween(tile, contactCentroid);
+        int deltaTowardContact = currentDistToContact - tileDistToContact;  // positive = moving closer
+
+        switch (stance)
+        {
+            case FleetStance.Advance:
+                // Push toward contacts
+                if (deltaTowardContact > 0)
+                    return deltaTowardContact * AdvanceDirectionalWeight;
+                return 0f;
+
+            case FleetStance.Retreat:
+            case FleetStance.DefensiveFallback:
+                // Push away from contacts, toward home (with variance for spread)
+                if (deltaTowardContact < 0)  // moving away from contact
+                {
+                    float weight = stance == FleetStance.Retreat ? RetreatDirectionalWeight : FallbackDirectionalWeight;
+                    float baseScore = -deltaTowardContact * weight;
+
+                    // Add variance: prefer tiles that spread around home centroid rather than
+                    // clustering on the exact home pixel. Tiles within ±RetreatVariance of home
+                    // get a small bonus.
+                    int distToHome = gridManager.DistanceBetween(tile, snapshot.HomeCentroid);
+                    if (distToHome <= RetreatVariance)
+                    {
+                        // Bonus tapers off as you get farther from home
+                        float spreadBonus = (RetreatVariance - distToHome) * 0.5f;
+                        baseScore += spreadBonus;
+                    }
+
+                    return baseScore;
+                }
+                return 0f;
+
+            default:
+                return 0f;
+        }
+    }
+
+    private static float GetCohesionMultiplier(FleetStance stance)
+    {
+        switch (stance)
+        {
+            case FleetStance.Retreat:
+            case FleetStance.DefensiveFallback:
+                return 1.0f;  // tight formation when defensive
+            case FleetStance.Hold:
+                return 0.7f;
+            case FleetStance.Hunt:
+                return 0.0f;  // no cohesion pull while searching — let ships spread out
+            case FleetStance.Advance:
+                return 0.2f;  // loose, pressing forward
+            case FleetStance.Flank:
+                return 0.5f;  // reserved for Stage 3+
+            default:
+                return 0.5f;
+        }
+    }
+
+    private static int NearestDistanceToContact(Vector2Int pos, AIContact contact, GridManager gridManager)
+    {
+        int best = int.MaxValue;
+        foreach (Vector2Int cell in contact.Cells)
+        {
+            int d = gridManager.DistanceBetween(pos, cell);
+            if (d < best)
+                best = d;
+        }
+        return best == int.MaxValue ? 0 : best;
+    }
+
+    // ---- Tile generation and per-tile scoring -------------------------------
 
     // CalculateReachableCells only validates the anchor cell (see
     // GridPathfinder), so every candidate still needs a CanPlaceShip check
@@ -251,44 +470,93 @@ public static class AIMovementPlanner
                 bestSafety = safety;
                 best = tile;
             }
-        }
+            }
 
         return best;
     }
 
-    private static Vector2Int ClosestTileToAnyEnemy(List<Vector2Int> candidates, List<ShipInstance> enemies, GridManager gridManager)
+    // Stage 2: fallback tile choosers now accept snapshot/member for formation scoring.
+    private static Vector2Int ClosestTileToAnyEnemy(
+        List<Vector2Int> candidates,
+        List<ShipInstance> enemies,
+        GridManager gridManager,
+        ShipInstance self,
+        FleetMember member,
+        FleetSnapshot snapshot)
     {
         Vector2Int best = candidates[0];
-        int bestDist = int.MaxValue;
+        float bestScore = float.NegativeInfinity;
 
         foreach (Vector2Int tile in candidates)
         {
+            int distToEnemy = int.MaxValue;
             foreach (ShipInstance enemy in enemies)
             {
-                int dist = gridManager.DistanceBetween(tile, enemy.anchor);
-                if (dist < bestDist)
-                {
-                    bestDist = dist;
-                    best = tile;
-                }
+                int d = gridManager.DistanceBetween(tile, enemy.anchor);
+                if (d < distToEnemy)
+                    distToEnemy = d;
+            }
+
+            // Closer to enemy is better (negative distance), plus formation terms.
+            float score = -distToEnemy + ScoreFormationTerms(tile, self, member, snapshot, gridManager);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = tile;
             }
         }
 
         return best;
     }
 
-    private static Vector2Int ClosestTileToCenter(List<Vector2Int> candidates, GridManager gridManager)
+    private static Vector2Int ClosestTileToCenter(
+        List<Vector2Int> candidates,
+        GridManager gridManager,
+        ShipInstance self,
+        FleetMember member,
+        FleetSnapshot snapshot)
     {
         Vector2Int center = new Vector2Int(gridManager.width / 2, gridManager.height / 2);
         Vector2Int best = candidates[0];
-        int bestDist = int.MaxValue;
+        float bestScore = float.NegativeInfinity;
+
+        Debug.Log($"[AI][Move] {self.shipType} ClosestTileToCenter: center={center}, currentPos={self.anchor}, candidates={candidates.Count}");
 
         foreach (Vector2Int tile in candidates)
         {
-            int dist = gridManager.DistanceBetween(tile, center);
-            if (dist < bestDist)
+            int distToCenter = gridManager.DistanceBetween(tile, center);
+            // Closer to center is better (negative distance), plus formation terms.
+            float score = -distToCenter + ScoreFormationTerms(tile, self, member, snapshot, gridManager);
+            if (score > bestScore)
             {
-                bestDist = dist;
+                bestScore = score;
+                best = tile;
+            }
+        }
+        Debug.Log($"[AI][Move] {self.shipType} chose {best} (score={bestScore:F1}, distToCenter={gridManager.DistanceBetween(best, center)})");
+        return best;
+    }
+
+    // Generic helper: pick the tile closest to an arbitrary point, with formation terms.
+    private static Vector2Int ClosestTileToPoint(
+        List<Vector2Int> candidates,
+        Vector2Int targetPoint,
+        GridManager gridManager,
+        ShipInstance self,
+        FleetMember member,
+        FleetSnapshot snapshot)
+    {
+        Vector2Int best = candidates[0];
+        float bestScore = float.NegativeInfinity;
+
+        foreach (Vector2Int tile in candidates)
+        {
+            int distToTarget = gridManager.DistanceBetween(tile, targetPoint);
+            // Closer to target is better (negative distance), plus formation terms.
+            float score = -distToTarget + ScoreFormationTerms(tile, self, member, snapshot, gridManager);
+            if (score > bestScore)
+            {
+                bestScore = score;
                 best = tile;
             }
         }
