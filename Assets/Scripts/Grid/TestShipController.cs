@@ -29,6 +29,7 @@ public class TestShipController : MonoBehaviour
     private bool draggingDeployment;
     private Vector2Int deploymentDragOffset;
     private Vector2Int lastDeploymentDragCell;
+    private int selectedDefenseNumber;
 
     private void Update()
     {
@@ -36,6 +37,11 @@ public class TestShipController : MonoBehaviour
         if (gridManager.Deployment == null || !gridManager.Deployment.IsComplete)
         {
             HandleDeploymentInput();
+            return;
+        }
+        if (gridManager.Combat.HasPendingDefense)
+        {
+            HandleDefenseInput();
             return;
         }
 
@@ -392,6 +398,25 @@ public class TestShipController : MonoBehaviour
 
     private void OnGUI()
     {
+        if (gridManager != null && gridManager.Combat != null && gridManager.Combat.HasPendingDefense)
+        {
+            PendingDefenseView pending = gridManager.Combat.PendingDefense;
+            if (pending.Defender == PlayerId.PlayerA)
+            {
+                GUILayout.BeginArea(new Rect(Screen.width - 250, 8, 242, 230), GUI.skin.box);
+                GUILayout.Label($"Incoming attack on {pending.Target.shipType}");
+                for (int i = 0; i < pending.EligibleDefenseIds.Count; i++)
+                    GUILayout.Label($"{i + 1}: {pending.EligibleDefenseIds[i]}");
+                GUILayout.Label("0: Pass");
+                string selectedDefense = selectedDefenseNumber > 0 && selectedDefenseNumber <= pending.EligibleDefenseIds.Count
+                    ? pending.EligibleDefenseIds[selectedDefenseNumber - 1] : "Pass";
+                GUILayout.Label($"Selected: {selectedDefense}");
+                GUILayout.Label("Press Enter to confirm");
+                GUILayout.EndArea();
+            }
+            return;
+        }
+
         if (gridManager == null || gridManager.Match == null || gridManager.Deployment == null ||
             gridManager.Deployment.IsComplete) return;
 
@@ -419,6 +444,29 @@ public class TestShipController : MonoBehaviour
             GUI.enabled = true;
         }
         GUILayout.EndArea();
+    }
+
+    private void HandleDefenseInput()
+    {
+        PendingDefenseView pending = gridManager.Combat.PendingDefense;
+        if (pending == null || pending.Defender != PlayerId.PlayerA) return;
+        if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.Keypad0)) selectedDefenseNumber = 0;
+        for (int i = 1; i <= pending.EligibleDefenseIds.Count && i <= 9; i++)
+        {
+            if (Input.GetKeyDown((KeyCode)((int)KeyCode.Alpha1 + i - 1)) ||
+                Input.GetKeyDown((KeyCode)((int)KeyCode.Keypad1 + i - 1)))
+                selectedDefenseNumber = i;
+        }
+        if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+        {
+            string defenseId = selectedDefenseNumber > 0 && selectedDefenseNumber <= pending.EligibleDefenseIds.Count
+                ? pending.EligibleDefenseIds[selectedDefenseNumber - 1] : null;
+            if (gridManager.Combat.SubmitDefense(PlayerId.PlayerA, defenseId, out AttackOutcome outcome))
+            {
+                Debug.Log(outcome.Avoided ? "Attack avoided." : $"Attack resolved: {outcome.Damage} damage.");
+                selectedDefenseNumber = 0;
+            }
+        }
     }
 
     private void HandleMoveInput(ShipInstance ship)
@@ -863,7 +911,11 @@ public class TestShipController : MonoBehaviour
         }
 
         WeaponProfile weaponToUse = ship.weapons[selectedWeaponIndex];
-        bool hit = gridManager.Combat.ResolveAttack(ship, clickedTile.Occupant, weaponToUse);
-        Debug.Log(hit ? "Attack resolved." : "Attack rejected.");
+        AttackRequestStatus status = gridManager.Combat.RequestAttack(ship, clickedTile.Occupant, weaponToUse);
+        if (status == AttackRequestStatus.PendingDefense &&
+            gridManager.Combat.PendingDefense.Defender == PlayerId.PlayerB &&
+            gridManager.Combat.SubmitDefense(PlayerId.PlayerB, null, out _))
+            status = AttackRequestStatus.Finalized;
+        Debug.Log($"Attack {status}.");
     }
 }

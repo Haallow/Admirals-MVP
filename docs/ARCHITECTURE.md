@@ -462,11 +462,11 @@ The documented current sequence is:
 7. Require at least one pair within weapon range.
 8. Require the target to be known in the attacker's fog.
 9. Require clear terrain line-of-fire for at least one in-range pair.
-10. Roll one d20 and obtain raw damage from the weapon's current damage table.
-11. Apply armor reduction.
-12. Mark the attacker as having attacked for the phase.
-13. Deduct finite weapon ammo/charge.
-14. If the target reaches zero health, remove it from occupancy and live-ship state and clear its fog/contact marks.
+10. `RequestAttack` offers ready defenses matching the target's current domain. Player A's response pauses resolution; Player B passes automatically.
+11. `SubmitDefense` spends and rolls the selected defense first. A successful defense avoids the weapon roll and damage; Crash Dive also submerges the ship and locks its next Move.
+12. On a pass or failed defense, roll the weapon and apply armor.
+13. Spend the attack opportunity and finite ammo once on every resolved attack, including an avoided hit.
+14. If the target reaches zero health, remove it from occupancy and live-ship state and clear its fog/contact marks. `AttackFinalized` reports the outcome.
 
 ### 12.3 Armor
 
@@ -483,9 +483,7 @@ Rules:
 
 ### 12.4 Return semantics
 
-The documented prototype behavior is that `ResolveAttack` returns `true` when an attack was legally resolved even if the d20 result was a miss.
-
-It returns `false` for a rejected attack.
+`RequestAttack` returns `Rejected`, `PendingDefense`, or `Finalized`. `SubmitDefense` returns false for an invalid response without changing the pending attack and returns the finalized outcome for a valid choice or pass.
 
 ### 12.5 Charge/ammo
 
@@ -502,11 +500,9 @@ When a target is destroyed, the current flow removes it from:
 
 and clears associated active/passive sensor contact marks through fog cleanup.
 
-### 12.7 Incomplete defense layer
+### 12.7 Defensive measures
 
-`DefenseProfile` and defense side-effect concepts exist in data, but defense rolls/side effects are not yet evaluated by attack resolution.
-
-This is an explicit incomplete feature rather than behavior to infer or simulate elsewhere.
+`CombatResolver` exposes a defender-safe pending view with target and eligible defense IDs. The keyboard adapter submits a choice or pass; it does not roll or mutate combat. Player B currently passes automatically. A successful Crash Dive sets SubSurface and prevents movement or rotation in the owner's next Move phase.
 
 ---
 
@@ -826,7 +822,7 @@ AI ----------/
 The following are intentionally still prototype/incomplete areas:
 
 - no win-condition/game-over flow,
-- no defense-roll/side-effect evaluation,
+- no Player B defense selection strategy or LAN defense adapter,
 - repair ship not implemented,
 - AI movement execution still legacy,
 - fog presentation is Gizmo/debug oriented,

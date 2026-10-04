@@ -28,7 +28,7 @@ For the deeper system map and runtime flow, see [`docs/ARCHITECTURE.md`](docs/AR
 
 Known prototype gaps:
 
-- Defense rolls and defense side effects are not yet resolved in combat.
+- Player B currently passes on defense automatically; its defense strategy remains future work.
 - Active scanning currently uses one fleet scan per player per Search phase.
 - Fog visualization is still Gizmo/debug oriented.
 - Repair ship is not yet implemented.
@@ -150,7 +150,7 @@ Do not expose hidden enemy state to controllers or AI when the acting player's f
 
 ## Combat invariants
 
-The authoritative path is `CombatResolver.ResolveAttack`.
+The authoritative path is `CombatResolver.RequestAttack` followed by `SubmitDefense` when a response is pending.
 
 Preserve these current rules unless the task explicitly changes gameplay:
 
@@ -163,9 +163,10 @@ Preserve these current rules unless the task explicitly changes gameplay:
 7. Require at least one pair in range.
 8. Require the target to be known in the attacker's fog.
 9. Require clear terrain line-of-fire for at least one in-range pair.
-10. Resolve the d20 damage table and armor reduction.
-11. Consume the attacker's per-phase attack opportunity and finite ammo/charge.
-12. On destruction, remove the target from occupancy/live-ship state and clear its sensor contact marks.
+10. Offer ready defenses matching the defender's current domain; block phase advancement while Player A chooses.
+11. Roll and spend a selected defense before the weapon roll. A successful defense avoids damage; Crash Dive submerges the ship and locks its next Move.
+12. Consume the attacker's per-phase attack opportunity and finite ammo/charge exactly once on resolution.
+13. Otherwise resolve the d20 damage table and armor reduction. On destruction, remove the target from occupancy/live-ship state and clear its sensor contact marks.
 
 Current armor formula:
 
@@ -177,7 +178,7 @@ A miss stays `0`; non-zero effective damage is clamped to at least `1`.
 
 Combat line-of-fire reuses `VisionResolver.TryGetFirstBlockingCell`. `Impassable` terrain blocks; `Normal` and `Costly` terrain are transparent. Endpoint cells are excluded from the blocker test.
 
-Defense profiles exist, but defense rolls/side effects are not yet evaluated. Do not implement them incidentally during an unrelated change.
+Player A defenses are resolved through the shared combat path. Player B currently passes automatically; do not add AI defense choices incidentally during unrelated work.
 
 ## Mines and reconnaissance planes
 
@@ -225,7 +226,7 @@ Inspect the actual source before editing; use this as the starting map.
 | Phase-driven fog lifecycle | `GridManager.HandlePhaseChanged`, `FogManager` |
 | Stored fog state | `FogGrid` |
 | Vision/cone/domain/LOS geometry | `VisionResolver` |
-| Attack legality/damage | `CombatResolver.ResolveAttack` via `GridManager.Combat` |
+| Attack legality/damage | `CombatResolver.RequestAttack` / `SubmitDefense` via `GridManager.Combat` |
 | Mine behavior | grid mine operations + `MatchState.mines` |
 | Recon plane lifecycle | plane runtime types + grid operations + `MatchState.planes` |
 | Player A prototype input | `TestShipController` |

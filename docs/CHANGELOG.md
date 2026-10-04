@@ -8,6 +8,14 @@ update pass.
 
 ---
 
+## Defensive measures
+
+- Legal attacks now pause for an eligible Player A defense choice. The shared combat resolver validates choices, rolls and spends defenses, finalizes damage and ammo once, and emits a structured outcome. Player B currently passes automatically.
+- Successful Crash Dive submerges the target and blocks its next Move phase's movement and rotation. Player B attacks resume after each Player A response.
+- Added a keyboard defense prompt. Verified eligibility, outcomes, charge use, Move locking, and Player B attack continuation with 11 temporary EditMode tests, then removed the test artifacts.
+
+---
+
 ## [Plane Staging Click Selection and Undeploy on Cancel]
 
 **Summary:**

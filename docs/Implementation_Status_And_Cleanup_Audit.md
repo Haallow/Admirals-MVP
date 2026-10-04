@@ -27,17 +27,17 @@ one of the five repeating battle phases.
 | Terrain and routes | IMPLEMENTED / LEGACY DEBT | `MapDefinition`, three terrain types, and read-only eight-direction weighted Dijkstra routes exist. | Legacy `MoveShip` still uses Chebyshev distance and does not charge terrain cost. |
 | Player A movement | IMPLEMENTED / PROTOTYPE | `PreviewMove`, provisional snapshots, full-footprint validation, and atomic confirmation; controller uses arrows, drag, Q/E, Escape/C, and Space. | Escape/C discard uncommitted previews only. A phase-advance guard rejects an invalid Move confirmation before Staging. |
 | Pre-match deployment | PARTIALLY IMPLEMENTED / UNFINISHED | `DeploymentService` auto-places hardcoded rosters at hardcoded anchors using `CanPlaceShip`. | Player-controlled arrangement, authoritative zones, confirmation, and a pre-match lifecycle are absent. |
-| Turn cycle | IMPLEMENTED | `Move -> Staging -> Search -> Battle -> End`; player switches only at End to Move; `PhaseChanged` drives reactions. | No game-over transition or pending-defense interruption. |
+| Turn cycle | IMPLEMENTED | `Move -> Staging -> Search -> Battle -> End`; player switches only at End to Move; `PhaseChanged` drives reactions. Pending defense blocks advancement. | No game-over transition. |
 | Passive vision | IMPLEMENTED / KNOWN ISSUE | Per-player passive fog is recomputed at Search, at End, and on plane deploy/undeploy. | Intended always-current Absolute vision is not maintained after all relevant state changes. |
 | Active scan | IMPLEMENTED / PROTOTYPE | Explicit Search scan preview and confirmation, one confirmed fleet scan per Search phase, active marks clear at End. | Input and preview use keys/Gizmos. Mine reveal uses detected ship cells rather than all scanned cells. |
-| Combat attack | IMPLEMENTED | Battle/turn, one-attack, charge, domain, occupied-cell range, fog, and terrain LOS gates; d20, armor, ammo, death cleanup. | No defense choice/resolution; no structured combat result or event record. |
-| Defensive Measures | UNFINISHED / REQUIRED | `DefenseProfile` tables, charge states, and `sideEffectId` data exist. | No eligibility/selection/roll/side-effect execution or pause before attack finalization. |
+| Combat attack | IMPLEMENTED | Battle/turn, one-attack, charge, domain, occupied-cell range, fog, and terrain LOS gates; d20, armor, ammo, death cleanup. `RequestAttack` / `SubmitDefense` return status and outcome; finalization emits an event. | Player B defense strategy remains automatic pass. |
+| Defensive Measures | IMPLEMENTED / PROTOTYPE | Ready domain-matching choices, saving throw, charge use, avoidance, and Crash Dive next-Move lock are resolved centrally. | Player A uses a keyboard prompt; AI defense strategy and LAN adapter remain future work. |
 | Mines | IMPLEMENTED / LIMITS | Staging stern deployment, 600 flat damage for the SwordFish card, trigger on moved footprint, charge recharge at End. | Trigger code does not filter mine owner; active scan reveal is limited as noted above. |
 | Recon planes | IMPLEMENTED / LIMITS | Carrier launch, Staging movement, passive Absolute halo, sortie refund for immediate undeploy, fuel expiry at End. | Launch rejects an Impassable destination although later movement crosses terrain; no plane combat. |
 | Match / win condition | UNFINISHED / REQUIRED | `MatchState` owns players, live ships, mines, and planes; dead ships leave occupancy and live roster. | No victory rule, central evaluator, game-over state, or result transition. |
 | End-phase / match statistics | UNFINISHED / REQUIRED | End clears active marks, resets attack flags, ticks ship recharge and owned plane fuel, removes expired planes, then recomputes passive fog. | No structured attack/hit/damage/defense/sinking statistics or turn summary. |
-| Human input | PROTOTYPE / TEMPORARY | `TestShipController` polls legacy Unity `Input` for Player A. | Production UI/commands and defense/deployment interactions are absent. |
-| AI | IMPLEMENTED / OUTSIDE CURRENT SCOPE | Player B is event-driven and uses fog-known enemies for target selection; movement execution uses `MoveShip`. | Known AI integration debt: movement semantics differ. Do not edit `Assets/Scripts/AI/` in current mechanics work. |
+| Human input | PROTOTYPE / TEMPORARY | `TestShipController` polls legacy Unity `Input` for Player A, including deployment and defense prompts. | Production UI/commands remain absent. |
+| AI | IMPLEMENTED / PROTOTYPE | Player B is event-driven and uses fog-known enemies for target selection; movement execution uses `MoveShip`. Its Battle sequence pauses and resumes around Player A defense responses. | AI defense selection is not implemented; movement semantics still differ. |
 | Art, sprites, and tiles | REQUIRES VERIFICATION / NOT INTEGRATED | No image, sprite atlas, model, or prefab art files were found under this checkout's `Assets`; sample scene has `GridView`, not ship/tile renderers. | User-reported available art may be outside this checkout. Confirm its location in Unity/Inspector, then integrate as needed. |
 | Board visualization | PROTOTYPE / TEMPORARY | `GridView.OnDrawGizmos` draws board, terrain, zones, ships, fog contacts, previews, cones, mines, and planes. | Keep useful diagnostics until equivalent rendering/feedback exists. |
 
@@ -206,49 +206,40 @@ The intent to reveal mines with active sonar is not generally met.
 Confirm desired mine-visibility rules before correcting the shared
 scan operation.
 
-### 2.5 Combat and unfinished Defensive Measures
+### 2.5 Combat and Defensive Measures
 
-`CombatResolver.ResolveAttack`, reached through `GridManager.Combat`,
-is the authoritative attack path. It rejects a dead target, an attacker
-who has already attacked, wrong phase/turn (when a `TurnManager` is
-present), an unready weapon charge, incompatible target domain, no
-occupied-cell pair in Chebyshev range, an unknown target, or all in-range
-pairs blocked by Impassable terrain. It then marks the ship's attack
-opportunity, rolls one d20 against the weapon's `RollTier` table, consumes
-one finite ammo even on a miss, applies armor, subtracts health, and
-removes a sunk ship from occupancy/live roster while clearing its marks.
+`CombatResolver.RequestAttack`, reached through `GridManager.Combat`, is
+the authoritative attack path. It rejects a dead or foreign target, an
+attacker who already attacked, wrong phase/turn, an unready weapon,
+incompatible target domain, no occupied-cell pair in Chebyshev range,
+unknown targets, and shots blocked by Impassable terrain. One pending
+attack is allowed at a time, and phase advancement waits for its response.
+
+Ready defenses matching the defender's current domain are offered after
+those checks. A `Both` defense is available in either domain. Player A
+uses number keys, 0 to pass, and Enter to submit; the prompt includes
+only its target and available defense IDs. Player B passes automatically
+in the local controller. A chosen defense spends a use and rolls first.
+"Hit Avoided" skips the weapon roll and damage; "Fail" continues to the
+weapon roll. Successful Crash Dive submerges the Wolf and blocks movement
+and rotation during its next Move phase, while domain toggling remains
+available. Mines do not use this defense flow.
+
+Every finalized attack spends the attacker's opportunity and finite ammo
+once, including a miss or successful defense. Otherwise the resolver
+applies armor, subtracts health, and removes a sunk ship from occupancy
+and the live roster while clearing its fog marks. `AttackFinalized` reports
+the structured outcome and resumes Player B's remaining attacks.
 
 ```text
 effectiveDamage = round(rawDamage * (1 - armor * 0.0015))
 ```
 
 Zero damage stays zero; a nonzero result is clamped to at least one.
-`ResolveAttack` returns true for a resolved miss, false for rejected
-requests. `CanShipAttack` checks alive/phase/turn/attack flag, but not a
-particular weapon or target.
-
-`DefenseProfile` stores eligibility domain, limited or infinite uses,
-saving-throw tiers, and an optional string `sideEffectId`.
-`ShipInstance.InitializeCharges` creates defense `ChargeState` entries.
-Wolf's Crash Dive uses `BecomeSubSurfaceAndSkipNextMove` as a string ID;
-there is no side-effect execution layer, pending attack, defense selection
-flow, defense roll, or defense consumption in `ResolveAttack`. These
-profiles are data, not a completed mechanic.
-
-**UNFINISHED / REQUIRED — Defensive Measures:** After an attack request
-passes its opening validations, the defending side must be able to choose
-an eligible, available defense before final damage/outcome is committed.
-For the current mechanics-only prototype, a human adapter can use
-number keys to select and Enter/Return to confirm. Shared combat
-operations should (1) expose eligible defenses, (2) validate a submitted
-choice and charge, (3) roll and resolve its result, (4) execute defined
-side effects, (5) let that result affect the incoming attack, and
-(6) finalize damage and structured outcome. The keyboard layer should
-only submit the choice. The same mechanism must be callable later by AI
-and LAN input. The exact timing of attack roll versus defense choice and
-individual defense effects need explicit design confirmation before
-implementation; the present complete-in-one-call `ResolveAttack` path
-cannot ask for a choice between validation and finalization.
+`RequestAttack` returns rejected, pending, or finalized. `SubmitDefense`
+rejects invalid choices without changing the pending attack and returns
+an outcome on success. `CanShipAttack` is a broad alive/phase/turn/attack
+flag query; it does not validate a particular weapon or target.
 
 ### 2.6 Mines and reconnaissance planes
 

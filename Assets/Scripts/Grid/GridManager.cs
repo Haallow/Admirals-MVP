@@ -90,6 +90,12 @@ public class GridManager : MonoBehaviour
 
     private bool CanLeavePhase(Phase currentPhase)
     {
+        if (Combat != null && Combat.HasPendingDefense)
+        {
+            Debug.LogWarning("Cannot advance phases while a defense response is pending.");
+            return false;
+        }
+
         if (Deployment == null || !Deployment.IsComplete)
         {
             Debug.LogWarning("Cannot advance phases before both formations are confirmed.");
@@ -228,7 +234,7 @@ public class GridManager : MonoBehaviour
 
     public bool PreviewMove(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
     {
-        if (ship == null)
+        if (ship == null || ship.movementLockedThisMove)
         {
             return false;
         }
@@ -946,6 +952,7 @@ public class GridManager : MonoBehaviour
 
     public bool MoveShip(ShipInstance ship, Vector2Int newAnchor, int newRotationDegrees)
     {
+        if (ship == null || ship.movementLockedThisMove) return false;
         int distance = DistanceBetween(ship.anchorAtTurnStart, newAnchor);
         if (distance > ship.movementRange)
         {
@@ -972,11 +979,20 @@ public class GridManager : MonoBehaviour
         if (newPhase == Phase.Move)
         {
             provisionalMoves.Clear();
+            if (match != null)
+            {
+                foreach (ShipInstance ship in match.GetPlayer(turnManager.CurrentPlayer).ships)
+                {
+                    ship.movementLockedThisMove = ship.skipNextMove;
+                    ship.skipNextMove = false;
+                }
+            }
             if (match != null && turnManager.CurrentPlayer == PlayerId.PlayerA)
             {
                 foreach (ShipInstance ship in match.playerA.ships)
                 {
-                    provisionalMoves[ship] = new ProvisionalMovementState(ship);
+                    if (!ship.movementLockedThisMove)
+                        provisionalMoves[ship] = new ProvisionalMovementState(ship);
                 }
             }
         }
@@ -992,6 +1008,8 @@ public class GridManager : MonoBehaviour
 
             if (match != null)
             {
+                foreach (ShipInstance ship in match.GetPlayer(turnManager.CurrentPlayer).ships)
+                    ship.movementLockedThisMove = false;
                 // Snapshot plane positions for movement range validation during Staging phase.
                 PlayerId actingPlayer = turnManager.CurrentPlayer;
                 foreach (PlaneUnit plane in match.planes)

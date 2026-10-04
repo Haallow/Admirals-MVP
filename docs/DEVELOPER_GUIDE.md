@@ -165,7 +165,7 @@ inclusive; unlisted damage in a Miss band is zero.
 Wolf defines Crash Dive, Acoustic Decoys, and Deep Dive defenses; the
 surface ship cards define Evasive Manouvers and Chaff & Flares. Their
 saving-throw bands and uses are stored on `DefenseProfile`, but none are
-consulted by `ResolveAttack`. The names in code include the
+consulted by `RequestAttack`. The names in code include the
 `Manouvers` spelling.
 
 ## Fog and vision
@@ -222,7 +222,7 @@ the next recomputation.
 
 ## Combat
 
-`CombatResolver.ResolveAttack(attacker, target, weapon)` is the attack
+`CombatResolver.RequestAttack(attacker, target, weapon)` is the attack
 authority, reached through `GridManager.Combat`. Its current sequence:
 
 1. Reject a dead target or an attacker already marked as having attacked.
@@ -234,19 +234,23 @@ authority, reached through `GridManager.Combat`. Its current sequence:
 6. Require at least one target occupied cell to be known in the attacker's fog.
 7. Require at least one in-range pair with clear terrain line of fire, using
    `VisionResolver.TryGetFirstBlockingCell`.
-8. Mark the attack opportunity spent, roll one d20 through the weapon's
-   inclusive `RollTier` table, consume one finite ammo even on a miss,
-   apply armor reduction, and subtract health.
+8. Offer ready defenses matching the target's current domain. Player A selects
+   one or passes; Player B currently passes automatically. A pending response
+   blocks further attacks and phase advancement.
+9. Roll and spend a selected defense first. Success avoids the weapon roll and
+   damage; Crash Dive submerges the target and locks its next Move.
+10. Spend the attack opportunity and finite ammo once. After a pass or failed
+    defense, roll the weapon, apply armor, and subtract health.
 9. If the target reaches zero health, clear its fog marks, remove its tile
    occupancy, and remove it from its owner's live ship list.
 
 `ApplyArmor` computes
 `round(rawDamage * (1 - armor * 0.0015))`. A zero-damage miss stays zero;
-nonzero damage is clamped to at least one. `ResolveAttack` returns true
-when a shot resolves, including a miss, and false on rejection.
+nonzero damage is clamped to at least one. `RequestAttack` returns a rejected,
+pending, or finalized status; `SubmitDefense` returns a structured outcome.
 `CanShipAttack` is a read-only alive/phase/turn/attack-flag query; it does
 not check weapon, target, range, fog, or line of fire. Defense profiles and
-their side-effect IDs are currently data only.
+their charge state and side effects are resolved by `CombatResolver`.
 
 ## Mines and reconnaissance planes
 
@@ -292,7 +296,7 @@ not general guarantees on direct service calls.
 | Staging ship | M requests stern mine deployment. P arms plane placement; next left-click requests deployment, using the selected carrier or the first available Player A carrier. Escape, C, or right-click cancels placement mode. |
 | Staging plane | A new plane becomes selected after placement but cannot move that turn. Arrows or a destination click call `PreviewPlaneMove` for older planes; C undeploys a newly launched plane or directly restores an older plane's start position. Space logs confirmation for owned planes and advances. |
 | Search | S or a click on the active ship opens a cone preview. Mouse hold/drag aims to a cardinal direction; Q/E rotates; Enter confirms; Escape/C cancels. Space confirms a pending preview, then advances. |
-| Battle | Keys 1, 2, 3 choose existing weapon slots. Clicking an occupied enemy tile requests `ResolveAttack`; clicking a friendly ship changes selection. The controller also checks the per-ship attack flag before requesting combat. |
+| Battle | Keys 1, 2, 3 choose existing weapon slots. Clicking an occupied enemy tile requests an attack; clicking a friendly ship changes selection. On an incoming attack, number keys choose a defense, 0 passes, and Enter submits. |
 
 The controller's Battle click path reads `Tile.Occupant` directly, so
 `GridView` hiding an unknown enemy is only a visual constraint. The
@@ -306,7 +310,9 @@ loop. At Move it builds `AITurnContext`, records/ages
 executes moves sequentially with `GridManager.MoveShip`. At Search it calls
 `AIActiveScanPlanner.RunActiveScans`. At Battle it refreshes memory without
 aging, selects attacks for living ships, and calls
-`GridManager.Combat.ResolveAttack`. It has no Staging or End decision.
+`GridManager.Combat.RequestAttack`. If Player A has an eligible defense,
+the remaining Player B attacks resume after its response. It has no Staging
+or End decision.
 
 `AITurnContext` contains living friendly and enemy lists, Player B fog, and
 `KnownEnemies` (an enemy with at least one occupied cell known in that fog).

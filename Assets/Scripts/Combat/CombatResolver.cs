@@ -1,5 +1,43 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
+public enum AttackRequestStatus { Rejected, PendingDefense, Finalized }
+
+public sealed class AttackOutcome
+{
+    public ShipInstance Attacker { get; }
+    public ShipInstance Target { get; }
+    public WeaponProfile Weapon { get; }
+    public string DefenseId { get; }
+    public bool Avoided { get; }
+    public int Damage { get; }
+
+    public AttackOutcome(ShipInstance attacker, ShipInstance target, WeaponProfile weapon,
+        string defenseId, bool avoided, int damage)
+    {
+        Attacker = attacker;
+        Target = target;
+        Weapon = weapon;
+        DefenseId = defenseId;
+        Avoided = avoided;
+        Damage = damage;
+    }
+}
+
+public sealed class PendingDefenseView
+{
+    public PlayerId Defender { get; }
+    public ShipInstance Target { get; }
+    public IReadOnlyList<string> EligibleDefenseIds { get; }
+
+    public PendingDefenseView(PlayerId defender, ShipInstance target, IReadOnlyList<string> ids)
+    {
+        Defender = defender;
+        Target = target;
+        EligibleDefenseIds = ids;
+    }
+}
 
 // Extracted from GridManager. Plain class, not a MonoBehaviour, same
 // convention as ShipInstance/FogGrid: logic that doesn't need Unity
@@ -8,24 +46,42 @@ using UnityEngine;
 public class CombatResolver
 {
     private readonly GridManager gridManager;
+    private ShipInstance pendingAttacker;
+    private ShipInstance pendingTarget;
+    private WeaponProfile pendingWeapon;
+    private readonly List<string> pendingDefenseIds = new List<string>();
+
+    public Func<int> RollD20 { get; set; } = () => UnityEngine.Random.Range(1, 21);
+    public event Action<AttackOutcome> AttackFinalized;
+    public bool HasPendingDefense => pendingTarget != null;
+    public PendingDefenseView PendingDefense => HasPendingDefense
+        ? new PendingDefenseView(pendingTarget.owner, pendingTarget, pendingDefenseIds.AsReadOnly())
+        : null;
 
     public CombatResolver(GridManager gridManager)
     {
         this.gridManager = gridManager;
     }
 
-    public bool ResolveAttack(ShipInstance attacker, ShipInstance target, WeaponProfile weapon)
+    public AttackRequestStatus RequestAttack(ShipInstance attacker, ShipInstance target, WeaponProfile weapon)
     {
+        if (HasPendingDefense || gridManager.Match == null || attacker == null || target == null || weapon == null ||
+            attacker.currentHealth <= 0 || attacker.owner == target.owner ||
+            !gridManager.Match.GetPlayer(attacker.owner).ships.Contains(attacker) ||
+            !gridManager.Match.GetPlayer(target.owner).ships.Contains(target) ||
+            !attacker.weapons.Contains(weapon))
+            return AttackRequestStatus.Rejected;
+
         if (target.currentHealth <= 0)
         {
             Debug.Log($"Attack rejected: {target.owner}'s ship is already destroyed.");
-            return false;
+            return AttackRequestStatus.Rejected;
         }
 
         if (attacker.hasAttackedThisPhase)
         {
             Debug.Log($"Attack rejected: {attacker.owner}'s {attacker.shipType} has already attacked this Battle phase.");
-            return false;
+            return AttackRequestStatus.Rejected;
         }
 
         if (gridManager.TurnManager != null)
@@ -33,13 +89,13 @@ public class CombatResolver
             if (gridManager.TurnManager.CurrentPhase != Phase.Battle)
             {
                 Debug.Log($"Attack rejected: attacks can only be made during Battle phase (current: {gridManager.TurnManager.CurrentPhase}).");
-                return false;
+                return AttackRequestStatus.Rejected;
             }
 
             if (attacker.owner != gridManager.TurnManager.CurrentPlayer)
             {
                 Debug.Log($"Attack rejected: it is not {attacker.owner}'s turn (current: {gridManager.TurnManager.CurrentPlayer}).");
-                return false;
+                return AttackRequestStatus.Rejected;
             }
         }
 
@@ -47,14 +103,14 @@ public class CombatResolver
         if (weaponCharge == null || !weaponCharge.IsReady)
         {
             Debug.Log($"Attack rejected: {weapon.id} is not ready (no charge state or recharging).");
-            return false;
+            return AttackRequestStatus.Rejected;
         }
 
         bool domainMatches = weapon.targetDomain == target.currentDomain || weapon.targetDomain == DomainType.Both;
         if (!domainMatches)
         {
             Debug.Log($"Attack rejected: {weapon.id} targets {weapon.targetDomain} but {target.owner}'s ship is {target.currentDomain}.");
-            return false;
+            return AttackRequestStatus.Rejected;
         }
 
         // Nearest attacker cell to nearest target cell, not anchor-only on either side.
@@ -82,13 +138,13 @@ public class CombatResolver
         if (weapon.weaponRange < minDistance)
         {
             Debug.Log($"Attack rejected: {weapon.id} range {weapon.weaponRange} is less than distance {minDistance} to {target.owner}'s ship.");
-            return false;
+            return AttackRequestStatus.Rejected;
         }
 
         if (!IsTargetKnown(attacker, target))
         {
             Debug.Log("Target not known.");
-            return false;
+            return AttackRequestStatus.Rejected;
         }
 
         // Phase 9B: terrain line-of-fire.
@@ -100,13 +156,79 @@ public class CombatResolver
         {
             Debug.Log($"[COMBAT] BLOCKED_LINE_OF_FIRE attacker={attacker.owner} weapon={weapon.id} " +
                       $"target={target.owner} pair=({blockedA},{blockedT}) blocker={firstBlocker}");
-            return false;
+            return AttackRequestStatus.Rejected;
         }
+
+        pendingAttacker = attacker;
+        pendingTarget = target;
+        pendingWeapon = weapon;
+        pendingDefenseIds.Clear();
+        foreach (DefenseProfile defense in target.defenses)
+        {
+            ChargeState charge = FindChargeState(target.defenseCharges, defense.id);
+            if ((defense.validAgainst == DomainType.Both || defense.validAgainst == target.currentDomain) &&
+                charge != null && charge.IsReady && !pendingDefenseIds.Contains(defense.id))
+                pendingDefenseIds.Add(defense.id);
+        }
+
+        if (pendingDefenseIds.Count == 0)
+        {
+            SubmitDefense(target.owner, null, out _);
+            return AttackRequestStatus.Finalized;
+        }
+
+        return AttackRequestStatus.PendingDefense;
+    }
+
+    public bool SubmitDefense(PlayerId defender, string defenseId, out AttackOutcome outcome)
+    {
+        outcome = null;
+        if (!HasPendingDefense || defender != pendingTarget.owner) return false;
+
+        DefenseProfile defense = null;
+        ChargeState defenseCharge = null;
+        if (defenseId != null)
+        {
+            if (!pendingDefenseIds.Contains(defenseId)) return false;
+            defense = pendingTarget.defenses.Find(d => d.id == defenseId);
+            defenseCharge = FindChargeState(pendingTarget.defenseCharges, defenseId);
+            if (defense == null || defenseCharge == null || !defenseCharge.IsReady ||
+                (defense.validAgainst != DomainType.Both && defense.validAgainst != pendingTarget.currentDomain))
+                return false;
+        }
+
+        bool avoided = false;
+        if (defense != null)
+        {
+            int roll = RollD20();
+            RollTier? tier = null;
+            foreach (RollTier candidate in defense.savingThrowTiers)
+                if (roll >= candidate.minRoll && roll <= candidate.maxRoll) { tier = candidate; break; }
+            if (!tier.HasValue || (tier.Value.outcomeLabel != "Fail" && tier.Value.outcomeLabel != "Hit Avoided"))
+                return false;
+            if (defenseCharge.remaining != -1) defenseCharge.remaining--;
+            avoided = tier.Value.outcomeLabel == "Hit Avoided";
+            if (avoided && defense.sideEffectId == "BecomeSubSurfaceAndSkipNextMove")
+            {
+                pendingTarget.currentDomain = DomainType.SubSurface;
+                pendingTarget.skipNextMove = true;
+            }
+        }
+
+        ShipInstance attacker = pendingAttacker;
+        ShipInstance target = pendingTarget;
+        WeaponProfile weapon = pendingWeapon;
+        pendingAttacker = null;
+        pendingTarget = null;
+        pendingWeapon = null;
+        pendingDefenseIds.Clear();
+
+        ChargeState weaponCharge = FindChargeState(attacker.weaponCharges, weapon.id);
 
         // Mark the ship as having attacked this Battle phase. Each ship may only attack once per Battle phase.
         attacker.hasAttackedThisPhase = true;
 
-        RollTier result = RollWeapon(weapon);
+        RollTier result = avoided ? new RollTier(0, 0, "Hit Avoided", 0) : RollWeapon(weapon);
 
         // Deduct one use. -1 is the infinite sentinel and is never decremented.
         if (weaponCharge.remaining != -1)
@@ -132,6 +254,8 @@ public class CombatResolver
             gridManager.Match.GetPlayer(target.owner).ships.Remove(target);
         }
 
+        outcome = new AttackOutcome(attacker, target, weapon, defenseId, avoided, effectiveDamage);
+        AttackFinalized?.Invoke(outcome);
         return true;
     }
 
@@ -171,7 +295,7 @@ public class CombatResolver
 
     private RollTier RollWeapon(WeaponProfile weapon)
     {
-        int roll = Random.Range(1, 21);
+        int roll = RollD20();
 
         foreach (var tier in weapon.rollTiers)
         {
@@ -224,7 +348,7 @@ public class CombatResolver
     // and (if TurnManager is present) it is currently the Battle phase and this ship owner's turn.
     public bool CanShipAttack(ShipInstance ship)
     {
-        if (ship == null || ship.currentHealth <= 0 || ship.hasAttackedThisPhase)
+        if (HasPendingDefense || ship == null || ship.currentHealth <= 0 || ship.hasAttackedThisPhase)
         {
             return false;
         }
