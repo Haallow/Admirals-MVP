@@ -176,12 +176,15 @@ within a layer and `GetState` returns the stronger layer result. Both Marked
 and Identified count as known for attacks. These values represent knowledge
 of a **cell**; `FogGrid` does not own a ship identity or scan coverage map.
 
-On Search entry, `FogManager.RecomputeAllPassive` clears each player's
+`FogManager.RecomputeAllPassive` clears each player's
 passive layer and scans living opposing ships with every friendly passive
 `VisionLayer`. It writes Identified for Absolute layers and Marked for Sensor
 layers. Owned planes contribute passive Absolute halo detection. Passive fog
-is also recomputed on plane deployment/undeployment and at End after fuel
-ticks. Active marks persist until End unless explicitly cleared for a
+is refreshed after deployment commits, committed ship movement or rotation,
+domain changes, plane deployment or committed movement, plane removal,
+ship destruction, Search entry, and End fuel ticks. Ship and plane previews
+leave passive fog on committed positions. The Wolf's passive Absolute layer
+works while surfaced or submerged. Active marks persist until End unless explicitly cleared for a
 destroyed ship. Passive information is rebuilt from current detections, not
 stored as persistent last-known contact memory.
 
@@ -273,10 +276,11 @@ the profile's launch range from any carrier hull cell. It does not reject
 ship occupancy at that cell. The plane is stored in `MatchState.planes`,
 not `GridManager.tiles`; deployment consumes a sortie and recomputes
 passive fog. A plane deployed this Staging cannot move until a later
-Staging. `PreviewPlaneMove` immediately changes its position after
+Staging. `PreviewPlaneMove` stores a separate candidate after
 checking owner, phase, bounds, and distance from `positionAtTurnStart`;
 it does not check terrain, occupancy, or intermediate path.
-`ConfirmPlaneMove` currently logs the position. `UndeployPlane` removes
+`ConfirmPlaneMove` updates the live position and refreshes fog; canceling
+discards the candidate. `UndeployPlane` removes
 only a plane deployed in the current Staging, refunds its launch ship's
 matching sortie charge up to capacity, and recomputes fog. At the owning
 player's End, fuel decreases by one and a plane at zero is removed.
@@ -294,7 +298,7 @@ not general guarantees on direct service calls.
 | Selection | Left-click a friendly ship's authoritative or relevant preview cell; Tab cycles Player A ships. During Staging, friendly planes can be clicked or reached by Tab after ships. |
 | Move | Arrows preview anchor movement; Q/E preview quarter-turn rotation; dragging from a selected ship's cell previews pointer movement. Escape/C clear **all** uncommitted provisional moves. D toggles an active Wolf between Surface and SubSurface. Space confirms provisional movement and, on success, advances. Enter does not commit movement. |
 | Staging ship | M requests stern mine deployment. P arms plane placement; next left-click requests deployment, using the selected carrier or the first available Player A carrier. Escape, C, or right-click cancels placement mode. |
-| Staging plane | A new plane becomes selected after placement but cannot move that turn. Arrows or a destination click call `PreviewPlaneMove` for older planes; C undeploys a newly launched plane or directly restores an older plane's start position. Space logs confirmation for owned planes and advances. |
+| Staging plane | A new plane becomes selected after placement but cannot move that turn. Arrows or a destination click call `PreviewPlaneMove` for older planes; C undeploys a newly launched plane or cancels an older plane's preview. Space commits owned plane moves and advances. |
 | Search | S or a click on the active ship opens a cone preview. Mouse hold/drag aims to a cardinal direction; Q/E rotates; Enter confirms; Escape/C cancels. Space confirms a pending preview, then advances. |
 | Battle | Keys 1, 2, 3 choose existing weapon slots. Clicking an occupied enemy tile requests an attack; clicking a friendly ship changes selection. On an incoming attack, number keys choose a defense, 0 passes, and Enter submits. |
 

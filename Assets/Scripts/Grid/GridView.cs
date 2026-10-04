@@ -288,9 +288,11 @@ public class GridView : MonoBehaviour
                 }
             }
 
+            Vector2Int displayPosition = plane.owner == PlayerId.PlayerA
+                ? gridManager.GetPlanePreviewPosition(plane) : plane.position;
             Vector3 center = new Vector3(
-                plane.position.x * gridManager.CellSize,
-                plane.position.y * gridManager.CellSize,
+                displayPosition.x * gridManager.CellSize,
+                displayPosition.y * gridManager.CellSize,
                 0f);
 
             // Color by owner.

@@ -210,7 +210,7 @@ public class CombatResolver
             avoided = tier.Value.outcomeLabel == "Hit Avoided";
             if (avoided && defense.sideEffectId == "BecomeSubSurfaceAndSkipNextMove")
             {
-                pendingTarget.currentDomain = DomainType.SubSurface;
+                gridManager.SetShipDomain(pendingTarget, DomainType.SubSurface);
                 pendingTarget.skipNextMove = true;
             }
         }
@@ -252,6 +252,7 @@ public class CombatResolver
             gridManager.Fog?.ClearMarksForShip(target);
             gridManager.RemoveShip(target);
             gridManager.Match.GetPlayer(target.owner).ships.Remove(target);
+            gridManager.RefreshPassiveVision();
         }
 
         outcome = new AttackOutcome(attacker, target, weapon, defenseId, avoided, effectiveDamage);

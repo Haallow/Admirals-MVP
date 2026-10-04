@@ -64,7 +64,7 @@ public class TestShipController : MonoBehaviour
                     {
                         if (p.owner == turnManager.CurrentPlayer)
                         {
-                            gridManager.ConfirmPlaneMove(p);
+                            if (!gridManager.ConfirmPlaneMove(p)) return;
                         }
                     }
                 }
@@ -115,7 +115,7 @@ public class TestShipController : MonoBehaviour
                 {
                     if (p.owner == PlayerId.PlayerA)
                     {
-                        if (p.position == clickedCell)
+                        if (gridManager.GetPlanePreviewPosition(p) == clickedCell)
                         {
                             isControllingPlane = true;
                             currentPlaneIndex = pIndex;
@@ -294,11 +294,8 @@ public class TestShipController : MonoBehaviour
             // Domain toggle: submarine (WolfClass) only, only during Move phase when active.
             if (ship.shipType == ShipType.WolfClass && Input.GetKeyDown(KeyCode.D))
             {
-                ship.currentDomain = ship.currentDomain == DomainType.Surface
-                    ? DomainType.SubSurface
-                    : DomainType.Surface;
-
-                Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
+                if (gridManager.TryToggleWolfDomain(ship))
+                    Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
             }
 
             HandleMoveInput(ship);
@@ -605,8 +602,8 @@ public class TestShipController : MonoBehaviour
                 }
             }
 
-            plane.position = plane.positionAtTurnStart;
-            Debug.Log($"[PLANE] Plane reverted to turn start position: {plane.positionAtTurnStart}");
+            gridManager.CancelPlaneMove(plane);
+            Debug.Log($"[PLANE] Plane move preview canceled; live position: {plane.position}");
             return;
         }
 
@@ -618,14 +615,14 @@ public class TestShipController : MonoBehaviour
 
         if (direction != Vector2Int.zero)
         {
-            Vector2Int candidate = plane.position + direction;
+            Vector2Int candidate = gridManager.GetPlanePreviewPosition(plane) + direction;
             gridManager.PreviewPlaneMove(plane, candidate);
         }
 
         if (Input.GetMouseButtonDown(0))
         {
             Vector2Int clickedCell = GetMouseGridCell();
-            if (clickedCell != plane.position)
+            if (clickedCell != gridManager.GetPlanePreviewPosition(plane))
             {
                 // Only move if not clicking a friendly ship or another friendly plane (which are selection targets)
                 bool isFriendlyShip = false;
@@ -640,7 +637,8 @@ public class TestShipController : MonoBehaviour
                 {
                     foreach (PlaneUnit other in gridManager.Match.planes)
                     {
-                        if (other != plane && other.owner == plane.owner && other.position == clickedCell)
+                        if (other != plane && other.owner == plane.owner &&
+                            gridManager.GetPlanePreviewPosition(other) == clickedCell)
                         {
                             isOtherFriendlyPlane = true;
                             break;

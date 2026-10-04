@@ -114,22 +114,21 @@ public static class ShipData
                 isPassive: true
             ),
 
-            // Default Absolute Vision - close-range identification while surfaced.
+            // Default Absolute Vision - close-range identification in either domain.
             new VisionLayer(
                 id: "Default Absolute Vision",
                 shape: ShapeType.Halo,
                 range: 4,
                 detects: DomainType.Both,
                 visionType: VisionType.Absolute,
-                isPassive: true,
-                onlyWhileSurfaced: true
+                isPassive: true
             ),
 
             // Active Search Sonar - longer-range Search phase scan.
             new VisionLayer(
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
-                range: 4,
+                range: 8,
                 detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false

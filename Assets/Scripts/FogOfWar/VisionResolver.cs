@@ -70,7 +70,7 @@ public static class VisionResolver
         // Safety net: fleet lists drop destroyed ships, but a ship killed mid-phase must never scan.
         if (source.currentHealth <= 0) return result;
 
-        // Why here: a submerged ship loses surfaced-only sensors (e.g. the Wolf's Default Absolute Vision).
+        // Individual sensor profiles may require the source to be surfaced.
         if (layer.onlyWhileSurfaced && source.currentDomain != DomainType.Surface) return result;
 
         // Only shapes that exist are evaluated; anything else detects nothing instead of everything.

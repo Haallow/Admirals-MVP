@@ -103,7 +103,7 @@ Current phase reactions:
 
 - `Move`: snapshot provisional movement state.
 - `Staging`: atomically confirm provisional ship movement and snapshot plane positions.
-- `Search`: recompute passive fog; active scan remains an explicit player/AI action.
+- `Search`: refresh passive fog; active scan remains an explicit player/AI action.
 - `Battle`: reset per-ship attack state for the Battle phase.
 - `End`: clear active fog marks and tick current end-of-turn lifecycle such as recharge/fuel.
 
@@ -140,7 +140,9 @@ Current behavior:
 
 - Both `Marked` and `Identified` count as known for attack gating.
 - `FogGrid.Upgrade` preserves the strongest overlapping knowledge.
-- Passive detection is rebuilt on `Search`.
+- Passive detection is rebuilt after deployment and every committed ship, domain, or plane vision change, including destruction; Search also refreshes it.
+- Ship and plane movement previews do not affect live occupancy or passive fog.
+- The Wolf's passive Absolute Vision works at Surface and SubSurface.
 - Active marks are temporary and are cleared on `End`.
 - Fog state remains per-player.
 - Destroyed ships must not leave stale fog/contact marks.

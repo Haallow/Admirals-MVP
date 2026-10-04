@@ -19,6 +19,8 @@ public class GridManager : MonoBehaviour
     private Dictionary<Vector2Int, Tile> tiles = new Dictionary<Vector2Int, Tile>();
     private Dictionary<ShipInstance, ProvisionalMovementState> provisionalMoves =
         new Dictionary<ShipInstance, ProvisionalMovementState>();
+    private readonly Dictionary<PlaneUnit, Vector2Int> planeMovePreviews =
+        new Dictionary<PlaneUnit, Vector2Int>();
     private ActiveScanPreviewState activeScanPreview;
     // Fleet active scan limit: at most one confirmed active scan per player per Search phase.
     private bool fleetScannedThisPhase = false;
@@ -75,8 +77,38 @@ public class GridManager : MonoBehaviour
     public bool ConfirmDeployment(PlayerId player)
     {
         if (Deployment == null || !Deployment.Confirm(player)) return false;
-        if (Deployment.IsComplete) turnManager?.StartMatch();
+        if (Deployment.IsComplete)
+        {
+            RefreshPassiveVision();
+            turnManager?.StartMatch();
+        }
         return true;
+    }
+
+    public void RefreshPassiveVision()
+    {
+        if (match != null && Fog != null)
+            Fog.RecomputeAllPassive(match);
+    }
+
+    public bool TryToggleWolfDomain(ShipInstance ship)
+    {
+        if (ship == null || match == null || turnManager == null ||
+            ship.shipType != ShipType.WolfClass || ship.currentHealth <= 0 ||
+            !match.GetPlayer(ship.owner).ships.Contains(ship) ||
+            turnManager.CurrentPhase != Phase.Move || turnManager.CurrentPlayer != ship.owner)
+            return false;
+
+        SetShipDomain(ship, ship.currentDomain == DomainType.Surface
+            ? DomainType.SubSurface : DomainType.Surface);
+        return true;
+    }
+
+    internal void SetShipDomain(ShipInstance ship, DomainType domain)
+    {
+        if (ship == null || ship.currentDomain == domain) return;
+        ship.currentDomain = domain;
+        RefreshPassiveVision();
     }
 
     private void OnDestroy()
@@ -455,10 +487,7 @@ public class GridManager : MonoBehaviour
                   $"Launch distance: {minDist}. Fuel: {planeProfile.fuelTurns}. " +
                   $"Sorties remaining: {planeCharge.remaining}");
 
-        if (Fog != null && match != null)
-        {
-            Fog.RecomputeAllPassive(match);
-        }
+        RefreshPassiveVision();
 
         return true;
     }
@@ -468,7 +497,7 @@ public class GridManager : MonoBehaviour
     // Planes do not interact with tiles, exclusion zones, or other ships.
     public bool PreviewPlaneMove(PlaneUnit plane, Vector2Int candidatePosition)
     {
-        if (plane == null)
+        if (plane == null || match == null || !match.planes.Contains(plane))
         {
             return false;
         }
@@ -505,15 +534,37 @@ public class GridManager : MonoBehaviour
         }
 
         // Planes fly over everything â€” no terrain or occupancy check.
-        plane.position = candidatePosition;
+        planeMovePreviews[plane] = candidatePosition;
         return true;
     }
 
-    // Commits a plane move.
-    public void ConfirmPlaneMove(PlaneUnit plane)
+    public Vector2Int GetPlanePreviewPosition(PlaneUnit plane)
     {
-        if (plane == null) return;
+        if (plane == null) return default;
+        return planeMovePreviews.TryGetValue(plane, out Vector2Int preview)
+            ? preview : plane.position;
+    }
+
+    public void CancelPlaneMove(PlaneUnit plane)
+    {
+        if (plane != null) planeMovePreviews.Remove(plane);
+    }
+
+    // Commits a validated preview; live plane position and vision change together.
+    public bool ConfirmPlaneMove(PlaneUnit plane)
+    {
+        if (plane == null || match == null || !match.planes.Contains(plane)) return false;
+        if (!planeMovePreviews.TryGetValue(plane, out Vector2Int preview)) return true;
+        if (turnManager == null || turnManager.CurrentPhase != Phase.Staging ||
+            turnManager.CurrentPlayer != plane.owner || plane.deployedThisTurn ||
+            !IsInBounds(preview) || DistanceBetween(plane.positionAtTurnStart, preview) > plane.movementRange)
+            return false;
+
+        plane.position = preview;
+        planeMovePreviews.Remove(plane);
+        RefreshPassiveVision();
         Debug.Log($"[PLANE] Plane move committed to {plane.position}.");
+        return true;
     }
 
     // Undeploys a plane that was deployed during the current Staging phase.
@@ -550,6 +601,7 @@ public class GridManager : MonoBehaviour
         }
 
         match.planes.Remove(plane);
+        planeMovePreviews.Remove(plane);
 
         // Refund sortie to launch ship
         if (plane.launchedFrom != null)
@@ -568,10 +620,7 @@ public class GridManager : MonoBehaviour
             }
         }
 
-        if (Fog != null)
-        {
-            Fog.RecomputeAllPassive(match);
-        }
+        RefreshPassiveVision();
 
         Debug.Log($"[PLANE] Plane at {plane.position} undeployed.");
         return true;
@@ -759,6 +808,7 @@ public class GridManager : MonoBehaviour
             return false;
         }
 
+        bool hadSnapshots = provisionalMoves.Count > 0;
         foreach (ProvisionalMovementState state in provisionalMoves.Values)
         {
             RemoveShip(state.Ship);
@@ -782,6 +832,7 @@ public class GridManager : MonoBehaviour
         }
 
         provisionalMoves.Clear();
+        if (hadSnapshots) RefreshPassiveVision();
         return true;
     }
 
@@ -971,6 +1022,7 @@ public class GridManager : MonoBehaviour
         ship.rotationDegrees = newRotationDegrees;
         PlaceShip(ship, ship.GetOccupiedCells());
         ResolveMinesFor(ship);
+        RefreshPassiveVision();
         return true;
     }
 
@@ -998,6 +1050,7 @@ public class GridManager : MonoBehaviour
         }
         else if (newPhase == Phase.Staging)
         {
+            planeMovePreviews.Clear();
             if (turnManager.CurrentPlayer == PlayerId.PlayerA)
             {
                 if (!ConfirmProvisionalMovement())
@@ -1023,6 +1076,7 @@ public class GridManager : MonoBehaviour
         }
         else if (newPhase == Phase.Search)
         {
+            planeMovePreviews.Clear();
             if (match != null)
             {
                 PlayerId actingPlayer = turnManager != null ? turnManager.CurrentPlayer : PlayerId.PlayerA;
@@ -1036,7 +1090,7 @@ public class GridManager : MonoBehaviour
             }
 
             // Passive vision remains automatic; active scans require player activation.
-            Fog.RecomputeAllPassive(match);
+            RefreshPassiveVision();
             activeScanPreview = null;
             fleetScannedThisPhase = false;
         }
@@ -1078,11 +1132,12 @@ public class GridManager : MonoBehaviour
                     if (plane.fuelRemaining <= 0)
                     {
                         match.planes.RemoveAt(i);
+                        planeMovePreviews.Remove(plane);
                         Debug.Log($"[PLANE] {plane.owner} plane at {plane.position} ran out of fuel and was removed.");
                     }
                 }
 
-                Fog.RecomputeAllPassive(match);
+                RefreshPassiveVision();
             }
         }
         // Staging: mine deployment is player-activated via DeployMine(ship).

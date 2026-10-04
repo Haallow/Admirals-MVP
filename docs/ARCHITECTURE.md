@@ -214,7 +214,7 @@ Staging
   -> allow staging actions such as mines/planes through their explicit commands
 
 Search
-  -> recompute passive fog
+  -> refresh passive fog
   -> update plane deployment lifecycle flags
   -> active scan remains an explicit player/AI action
 
@@ -364,7 +364,7 @@ This prevents one player's observations from becoming global board knowledge.
 
 ### 9.3 Passive detection
 
-Passive detection is rebuilt during `Search`.
+`FogManager` rebuilds both players' passive detection after deployment commits and each committed ship move, rotation, domain change, plane deployment or move, plane removal, and ship destruction. Search also refreshes it. Ship and plane previews leave live vision unchanged. The Wolf's passive Absolute layer works in both domains. Active marks remain until End unless destruction clears a contact.
 
 The exact geometry/domain filtering is handled through `VisionResolver` and the fog manager rather than being stored as geometry inside `FogGrid`.
 
@@ -552,7 +552,7 @@ Current staging behavior includes:
 
 - a freshly deployed plane is movement-locked for that deployment turn,
 - a freshly deployed plane can be undeployed/refunded through the current input flow,
-- later Staging phases may preview movement from the stored plane position.
+- later Staging phases may preview movement separately from the plane's live position; confirmation commits the position and refreshes fog, while canceling discards the preview.
 
 Plane state is runtime state rather than a replacement for fog ownership; its sensor effect is applied through the fog/vision system.
 
