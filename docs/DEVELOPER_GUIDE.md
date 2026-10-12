@@ -1,1401 +1,395 @@
 # Admirals Developer Guide
 
-This document describes the current Unity prototype as implemented in the
-repository. It focuses on Milestone 5, Fog of War, but includes the earlier
-systems that create ships, place them, advance turns, and resolve attacks.
-The source code is authoritative. Where older planning/status documents differ
-from the source, the discrepancy is called out below.
+This guide describes the checked-in Unity prototype. Runtime code in
+`Assets/Scripts` is the authority for behavior; the sample scene and map asset
+show the checked-in setup. `docs/CHANGELOG.md` records history and is not
+evidence that a feature still works as described there.
 
-## Scope and implementation status
+## Current scope and limits
 
-The current project is a local, turn-based naval combat prototype:
+- The project declares Unity `6000.5.10f1` in `ProjectSettings/ProjectVersion.txt`.
+- `GridManager` defaults to a 30 by 15 rectangular board. The sample scene
+  assigns `TestMap.asset`, also 30 by 15, with no terrain entries. Thus the
+  checked-in sample board has only Normal terrain, though the runtime supports
+  Costly and Impassable cells when a map defines them.
+- Ships are plain serializable C# `ShipInstance` objects, built from hardcoded
+  `ShipData` cards. They are not ship GameObjects or ScriptableObject cards.
+- Current systems include provisional Player A movement, legacy AI movement,
+  per-player fog, passive and active detection, terrain line of sight, combat
+  with d20 damage and armor, contact mines, and reconnaissance planes.
+- The playable presentation and input remain prototype level. `GridView`
+  draws Gizmos; `TestShipController` uses Unity's legacy `Input` polling.
+  There is no production fog shroud or ship art in this runtime path.
+- Combat resolves chosen defenses and their successful side effects through
+  `CombatResolver`. There is no repair ship or production game-over
+  screen. Fleet elimination now produces a match result and Console summary.
+  The AI has no Staging actions for mines or planes.
 
-- Unity version: `6000.5.10f1`.
-- The board is a rectangular `30 x 15` grid by default.
-- Ships are plain C# runtime objects. They are not GameObjects or
-  `ScriptableObject` assets.
--   `GridManager` owns the authoritative tile occupancy, board operations, match
-  setup, and phase reaction. `CombatResolver` owns combat resolution and
-  `GridView` owns Gizmo rendering.
-- `MatchState` owns both player rosters and their live `ShipInstance` lists.
-- Fog is maintained separately for Player A and Player B.
-- Input and AI are still prototype controllers driven by Unity lifecycle
-  callbacks and console/Gizmo verification.
+## Ownership and runtime flow
 
-The older `PROJECT_STATUS.md` describes Fog of War as an empty placeholder.
-That is stale relative to the current source. The current source contains
-passive detection, active cone detection, fog gating in `ResolveAttack`, and
-active-mark clearing. The current source also contains `Staging` and `End`
-phases, although the status document's earlier phase summary lists only
-`Move`, `Search`, and `Battle`.
-
-The remaining known gaps are:
-
-- `AIController` still targets Player A's first ship using global knowledge.
-- The AI still controls only Player B's first ship.
-- Active scanning is player-activated during Search: `S` opens the selected
-  ship's non-passive cone preview, `Q`/`E` rotate it, and `Escape`/`C` cancels
-  it. Confirmation is handled by the UI layer, not a substitute keyboard
-  shortcut. Passive vision remains automatic.
-- Fog state is internal runtime state; there is no player-facing visibility UI.
-- Defense rolls, recharge, and defense side effects are not implemented. Armor
-  reduction is implemented: `CombatResolver.ApplyArmor` applies
-  `round(rawDamage * (1 - armor * 0.0015))` after each successful d20 roll.
-- There is no win-condition/game-over flow.
-- Verification Gizmos remain, but temporary fog logging and cone-count debug
-  commands have been removed.
-
----
-
-## Recent milestone history and current direction
-
-### Milestones 1–4: grid foundation
-
-- The board uses `Dictionary<Vector2Int, Tile>` with Gizmo-based visualization.
-- Ships support placement, movement, rotation, and collision validation through
-  `CanPlaceShip` and `MoveShip`.
-- The turn loop expanded from three phases to
-  `Move → Staging → Search → Battle → End`.
-- The full ship data model includes `WeaponProfile`, `DefenseProfile`,
-  `RollTier`, `VisionLayer`, and `ChargeState`, initially implemented for Wolf
-  Class and then Athena.
-
-### Barebone Move + Attack + AI
-
-- `CombatResolver` performs ammo/domain/range validation, d20 rolls, damage,
-  and ship destruction.
-- `TestShipController` supports click-to-aim targeting and number-key weapon
-  selection.
-- `AIController` uses greedy expected-value scoring and moves/fires
-  automatically for the prototype Player B flow.
-- Movement validates against `anchorAtTurnStart`, preventing repeated moves in
-  one phase from exceeding the movement budget.
-
-### Milestone 5: Fog of War and fleets
-
-- `PlayerState`, `MatchState`, and `DeploymentService` replaced the former
-  single-ship assumptions with automatically deployed fleets for both players.
-- `FogState`, `FogGrid`, `FogManager`, and `VisionResolver` provide
-  non-sticky, per-player fog. Passive Halo vision writes `Identified` for
-  Absolute layers and `Marked` for Sensor layers; active Cone scans during
-  Search write marks only.
-- Attacks are gated by known target cells. Tab cycles Player A ships and
-  number keys select weapons.
-- End-to-end verification covered submerged detection through `Both`-domain
-  sensors, destroyed-ship cleanup, asymmetric detection ranges, deployment
-  validation, and the multi-move range bug.
-
-### Housekeeping completed
-
-- Attack range uses nearest occupied attacker and target cells rather than
-  anchors only.
-- `AIController.actedThisPhase` is set before acting.
-- `DrawDebugHalos` now uses hull-cell range and calls
-  `VisionResolver.TryGetFirstBlockingCell` per source cell, matching the
-  authoritative passive detection result. Clear cells draw cyan; terrain-blocked
-  cells draw dark red.
-- Temporary `[Fog]` logs, `FogGrid.Describe`, and `Debug Cone Counts` were
-  removed.
-- `DrawDebugCones` and `DrawDebugHalos` remain as persistent visualization
-  surfaces for the planned scan/fog UI.
-- Ammo deduction is implemented: `CombatResolver.ResolveAttack` decrements
-  `weaponCharge.remaining` after a successful d20 roll. The `-1` infinite
-  sentinel is never decremented. The outcome log includes remaining ammo count.
-- `GridManager.CanAdvancePhase(Phase)` is a pure read-only pre-check called by
-  `TestShipController` before every `AdvancePhase()` call. For `Move` it
-  mirrors the validation loop of `ConfirmProvisionalMovement` without
-  committing; for all other phases it returns true unconditionally.
-- Ship placement now enforces a one-tile exclusion zone:
-  `GridManager.HasClearExclusionZone` rejects any candidate footprint whose
-  cells are within Chebyshev distance 1 of any other ship's cells. This applies
-  in `CanPlaceShip`, `IsValidPreviewFootprint`, and
-  `IsValidConfirmationFootprint`.
-- `ShipData` syntax errors fixed: `BuildCruiserClass` and `BuildCarrierClass`
-  method names corrected; rogue commas after closing braces removed;
-  `ShipFactory` case labels corrected.
-
-### Current refactor boundary
-
-The former all-in-one `GridManager` was split into three responsibilities:
-
-| Component | Responsibility |
+| Authority | Responsibility |
 | --- | --- |
-| `GridManager` | Board construction, occupancy, placement, movement, match setup, and phase wiring. |
-| `CombatResolver` | Attack legality, nearest-cell range checks, d20 resolution, damage, and destruction cleanup. |
-| `GridView` | Grid, starting-zone, cone, and halo Gizmo rendering; it reads `GridManager` state but does not mutate it. |
+| `MatchState` and `PlayerState` | Own players, requested rosters, live ship lists, mines, planes, match result, and turn summaries. `AllShips()` builds a new aggregate list. |
+| `GridManager.tiles` | Authoritative ship occupancy by coordinate. `GridManager` builds the board, places/removes/moves ships, deploys mines and planes, owns provisional movement and scan previews, and reacts to phases. |
+| `ShipInstance` | Holds a ship's owner, card profiles, health, domain, anchor, rotation, footprint offsets, charge states, and per-Battle attack flag. Its occupied cells derive from the anchor, rotation, and offsets. |
+| `FogManager` / `FogGrid` | Own the two players' separate knowledge grids and their lifecycle. A `FogGrid` stores knowledge, not ships or occupancy. |
+| `VisionResolver` | Stateless detection shapes, domain filters, and terrain line-of-sight geometry. |
+| `CombatResolver` | Authoritative attack validation, roll, damage, ammunition use, and kill cleanup; exposed as `GridManager.Combat`. |
+| `GridView` | Reads grid and fog state to draw Gizmos; does not change gameplay state. |
+| `TurnManager` | Owns player and phase, then emits `PhaseChanged`; it does not implement board, fog, or combat rules. |
 
-Controllers call `GridManager` for board operations and
-`GridManager.Combat` for attacks. `GridView` receives a `GridManager` reference
-in the scene and is intentionally separate from gameplay authority.
+`GridManager.Awake` builds tiles and creates `FogManager` and
+`CombatResolver`. `GridManager.Start` creates the two `PlayerState` objects,
+builds `MatchState`, initializes `DeploymentService`, drafts Player B's local
+formation, and subscribes to
+`TurnManager.PhaseChanged`. `AIController` subscribes in `OnEnable` and
+unsubscribes in `OnDisable`. `TurnManager.AdvancePhase` asks generic guards
+whether the current phase may end, then changes phase, switches player only
+on End to Move, logs, and invokes subscribers with the new phase.
+`GridManager` guards Player A's Move exit with the same read-only validation
+used by movement confirmation, including direct phase advances. The
+prototype controller confirms movement before calling `AdvancePhase`.
 
-### Locked 20-day roadmap decisions
+The cycle is `Move -> Staging -> Search -> Battle -> End -> next player's Move`.
 
-- Obstacles will block movement through Dijkstra pathfinding and also block
-  line of sight. Phase 9A is implemented with a supercover Bresenham LOS
-  traversal: only impassable terrain blocks, costly terrain remains
-  transparent while using distinct tile art, and corner-to-corner diagonal
-  gaps are blocked conservatively. Impassable terrain itself is always visible
-  as map geometry and is not a vision target.
-- Movement is provisional: keyboard and pointer/drag input preview through the
-  same API. `Escape`/`C` cancels the preview, while `Space` commits all valid
-  previews and immediately advances out of `Move`; visual previews remain
-  read-only until that commit.
-- Active scanning is player-activated during Search: `S` opens the selected
-  ship's non-passive cone preview, `Q`/`E` rotate it, and `Escape`/`C` cancels
-  it. Confirmation is handled by the UI layer. Passive vision remains automatic.
-- Every passive and non-passive scan writes distinct `[VISION]` logs. The log
-  label identifies activation (`PASSIVE` or `NON-PASSIVE`), shape (`HALO` or
-  `CONE`), configured reveal type (`SENSOR` or `ABSOLUTE`), source ship,
-  owner, layer, detected cells, and applied fog state. Non-passive scans always
-  apply `Marked`, even if a layer is configured as `Absolute`.
-- The active Cone Gizmo uses the same supercover LOS check as `VisionResolver`.
-  Clear candidate cells use the normal preview color; cells beyond an
-  impassable blocker use a blocked color. The Gizmo remains visualization-only;
-  authoritative scan results continue to emit the distinct `FogManager` logs.
-- Phase 9B is implemented: terrain-aware attack line of fire. Knowing a target
-  does not guarantee a clear shot. Only `Impassable` terrain blocks attacks;
-  `Normal` and `Costly` terrain remain transparent. `CombatResolver` reuses
-  the Phase 9A supercover Bresenham traversal via
-  `VisionResolver.TryGetFirstBlockingCell` and rejects fully-blocked attacks
-  before rolling, consuming ammunition, or applying damage. The AI's weapon
-  pre-check (`CanFire`) also applies the line-of-fire gate so it never scores
-  a weapon whose every in-range pair is blocked.
-- Staging mine deployment is implemented for the SwordFish class: `M` key
-  during Staging calls `GridManager.DeployMine(ship)`, which places a
-  `MineTile` one cell behind the stern. Mines deal 600 flat damage (no roll,
-  no armor, no defenses) to any ship — friendly or enemy — that confirms
-  movement onto the mine's cell. Enemy mines are invisible until revealed by
-  active sonar scan. Mines are stored in `MatchState.mines`.
-- Planes and repair ship are still planned for future Staging milestones.
-- Basic UI will expose fog/scan toggles, health bars, phase/ship/weapon
-  indicators, and movement/scan previews.
-
----
-
-## 1. Architecture overview
-
-### Major systems
-
-| System | Main implementation | Responsibility |
+| Entered phase | `GridManager` reaction | Other action |
 | --- | --- | --- |
-| Grid | `GridManager`, `Tile`, `FootprintUtil` | Builds the board, stores occupancy, validates placement, and moves ships. |
-| Terrain | `MapDefinition`, `TerrainType`, `Tile` | Defines reusable normal, costly, and impassable map data loaded into runtime cells. |
-| Ships | `ShipInstance`, `ShipFactory`, `ShipData`, `ShipType` | Defines runtime ship state and builds hardcoded ship cards. |
-| Match | `MatchState`, `PlayerState`, `DeploymentService` | Owns both players, their fleet rosters, live ships, and initial deployment. |
-| Turns | `TurnManager`, `Phase`, `PlayerId` | Advances the phase sequence and identifies the acting player. |
-| Fog of War | `FogManager`, `FogGrid`, `FogState`, `VisionResolver` | Computes each player's detected enemy cells and stores their knowledge. |
-| Combat data | `WeaponProfile`, `DefenseProfile`, `RollTier`, `ChargeState`, `DomainType`, `VisionLayer` | Stores weapon, defense, roll-table, charge, domain, and vision definitions. |
-| Combat behavior | `CombatResolver` via `GridManager.Combat` | Performs the current attack validation and d20 damage resolution. |
-| Human input | `TestShipController` | Moves Player A ships, selects weapons, toggles domain, and requests attacks. |
-| AI | `AIController` | Prototype Player B movement and greedy weapon selection. It is not fog-aware yet. |
-| Deployment | `DeploymentService` | Creates each roster's ships, assigns ownership/placement, and adds them to the grid. |
+| Move | Clears provisional states; snapshots each Player A ship when Player A is active. | On Player B's Move event, AI snapshots and moves its ships sequentially through legacy `MoveShip`. |
+| Staging | For Player A, calls `ConfirmProvisionalMovement` again; snapshots the acting player's plane positions. | Player A may deploy mines/planes and move eligible planes. AI does no Staging action. |
+| Search | Clears the acting player's planes' `deployedThisTurn`, recomputes passive fog for both players, clears scan preview and fleet scan flag. | A scan requires explicit Player A input or the AI Search event. |
+| Battle | Resets all live ships' `hasAttackedThisPhase`. | Player A input or AI may request attacks. |
+| End | Resets attack flags, clears active fog marks and scan state, ticks the acting player's ship recharge and plane fuel, removes exhausted planes, refreshes passive fog, then snapshots and logs the turn summary. | Space starts the next player's Move unless the match has ended. |
 
-### Ownership and authority
+Combat destruction and completed mine movement commits evaluate fleet elimination immediately. A result blocks subsequent commands and phase advances and records a partial final summary without End recharge or fuel ticks. If both fleets are lost in the same mine commit, the result is a draw. The prototype reports the result in the Console.
 
-```text
-MatchState
-├── playerA : PlayerState
-│   └── ships : List<ShipInstance>
-└── playerB : PlayerState
-    └── ships : List<ShipInstance>
+The starting Move phase begins through `StartMatch` after both formations
+commit; it emits `PhaseChanged(Move)`. `TestShipController` also snapshots Player A's
+`anchorAtTurnStart` when it first observes Move.
 
-GridManager
-├── tiles : Dictionary<Vector2Int, Tile>       authoritative occupancy
-├── Match : MatchState                          authoritative match reference
-└── Fog : FogManager
-    ├── Player A FogGrid
-    │   ├── passive layer
-    │   └── active layer
-    └── Player B FogGrid
-        ├── passive layer
-        └── active layer
-```
+## Grid, terrain, placement, and movement
 
-`MatchState` is authoritative for which ships are alive and which player owns
-them. `GridManager.tiles` is authoritative for which ship occupies a board
-cell. A ship's `anchor`, `rotationDegrees`, and `footprintOffsets` are the
-authoritative inputs used to calculate its occupied cells; the tile dictionary
-must be kept in sync by `PlaceShip`, `RemoveShip`, and `MoveShip`.
+`MapDefinition` is a reusable ScriptableObject containing width, height, and
+sparse `MapTerrainEntry` values. If assigned, its dimensions replace
+`GridManager.width/height` during `BuildGrid`; unspecified cells are Normal.
+Without an asset, the serialized grid dimensions remain and all new tiles
+default to Normal. A `Tile` holds immutable `Position`, current `Occupant`,
+terrain type/cost, and a currently unused `IsValid` flag.
 
-`FogGrid` is authoritative only for one player's knowledge. It does not own
-ships, calculate geometry, or remember scan coverage. `FogManager` owns the two
-fog grids and decides when they are rebuilt or cleared. `VisionResolver` is
-stateless behavior used by `FogManager`.
+| Terrain | Passable | Entering cost | Vision and attack LOS |
+| --- | --- | ---: | --- |
+| Normal | Yes | 1 | Transparent |
+| Costly | Yes | At least 2, configured by map entry | Transparent |
+| Impassable | No | 0 | Blocks intermediate rays |
 
-### Terrain foundation
-
-`MapDefinition` is the reusable authoring asset for a map's dimensions and
-coordinate-specific terrain entries. When assigned to `GridManager`, its
-dimensions are authoritative and its entries are copied into runtime `Tile`
-objects during `BuildGrid`. Without an assigned asset, the existing serialized
-`GridManager.width` and `height` are preserved and every tile defaults to
-`Normal`.
-
-`TerrainType` currently has three values:
-
-- `Normal`: passable with movement cost `1`.
-- `Costly`: passable with a configurable integer cost of at least `2`.
-- `Impassable`: not passable; its movement cost is `0`.
-
-`Tile.IsPassable`, `Tile.MovementCost`, and the corresponding
-`GridManager` terrain queries expose this data. `GridPathfinder` consumes
-terrain cost for movement. Vision line-of-sight (Phase 9A) and attack
-line-of-fire (Phase 9B) both treat only `Impassable` terrain as blocking;
-`Normal` and `Costly` terrain are transparent to both.
-
-### Runtime flow
+`FootprintUtil.RotateOffsets` uses these quarter turns:
 
 ```text
-GridManager.Awake()
-    ├── BuildGrid()
-    └── new FogManager()
-
-GridManager.Start()
-    ├── new PlayerState(PlayerA, roster)
-    ├── new PlayerState(PlayerB, roster)
-    ├── new MatchState(playerA, playerB)
-    └── DeploymentService.DeployAll(match, gridManager)
-
-TurnManager.AdvancePhase()
-    ├── changes CurrentPhase
-    ├── switches CurrentPlayer after End
-    ├── logs the new state
-    └── invokes PhaseChanged
-
-GridManager.HandlePhaseChanged()
-    ├── Move    → snapshot provisional states for current player's ships
-    ├── Staging → confirm provisional movement atomically;
-    │             mine deployment is player-activated (M key → DeployMine)
-    ├── Search  → Fog.RecomputeAllPassive(match)
-    │             (active scan is player-activated: S → ActivateActiveScan,
-    │              Q/E → RotateActiveScan, UI confirms → ConfirmActiveScan,
-    │              Escape/C → CancelActiveScan)
-    └── End     → Fog.ClearAllActiveMarks()
+0° (x,y)     90° (-y,x)     180° (-x,-y)     270° (y,-x)
 ```
 
-The event is deliberately one-way. `TurnManager` knows only that it raises
-`PhaseChanged`; it does not know about fog, ships, or the grid.
-
----
-
-## 2. File-by-file map
-
-### `Assets/Scripts/Grid/`
-
-#### `GridManager.cs` — `GridManager : MonoBehaviour`
-
-The scene-level coordinator for board occupancy, placement, movement, match
-setup, and phase-driven fog updates. Combat and visualization are delegated to
-`CombatResolver` and `GridView`.
-
-Important members:
-
-- `width`, `height`, `cellSize`: serialized board settings.
-- `tiles`: private coordinate-to-`Tile` dictionary.
-- `match`: the runtime `MatchState`.
-- `turnManager`: serialized event source.
-- `Fog`: the `FogManager` created in `Awake`.
-- `BuildGrid`, `GetTile`, `IsInBounds`, and `IsOccupied`: board access.
-- `GetTerrainType`, `IsTerrainPassable`, and `GetTerrainMovementCost`: terrain
-  data queries only; they do not alter movement rules.
-- `CanPlaceShip`, `PlaceShip`, `RemoveShip`, `MoveShip`: placement/movement
-  path.
-- `Combat`: `CombatResolver` facade used by controllers for attacks.
-- `HandlePhaseChanged`: phase-to-fog integration.
-
-#### `CombatResolver.cs` — `CombatResolver`
-
-Plain combat service created by `GridManager.Awake`. It owns attack validation,
-nearest-cell range checks, terrain line-of-fire validation, d20 damage
-resolution, and destroyed-ship cleanup. It uses `GridManager` only for board
-distance, occupancy removal, match state, and fog access.
-
-`HasClearLineOfFire` is a public helper that checks whether at least one
-in-range attacker/target cell pair has an unobstructed supercover Bresenham
-path. It delegates to `VisionResolver.TryGetFirstBlockingCell` so the same
-algorithm and corner-adjacency policy govern both vision LOS and attack
-line-of-fire.
-
-#### `GridView.cs` — `GridView : MonoBehaviour`
-
-Visualization component that reads `GridManager` state and draws the board,
-starting zones, ship footprints, cone overlays, and halo overlays through
-Gizmos. During Move, provisional ship footprints are drawn from
-`ProvisionalMovementState` while the committed footprint is hidden. It does
-not own occupancy or mutate gameplay state. It also draws the weighted Dijkstra
-reachable-anchor area, filtered by the ship's current footprint placement rules.
-
-#### `FootprintUtil.cs` — `FootprintUtil`
-
-Stateless grid geometry utility. `RotateOffsets` applies the project's
-clockwise 0/90/180/270-degree convention to local footprint offsets.
-`GetWorldCells` rotates every offset and adds the ship anchor.
-
-#### `Tile.cs` — `Tile`
-
-Plain data object for one grid coordinate. `Position` is immutable after
-construction, `Occupant` is the current ship reference, and `IsValid` remains
-a reserved flag for future non-rectangular maps. `TerrainType`,
-`MovementCost`, and `IsPassable` describe the loaded terrain without changing
-movement behavior.
-
-#### `MapDefinition.cs` — `MapDefinition`
-
-Reusable `ScriptableObject` map asset containing width, height, and sparse
-coordinate-to-terrain entries. Unspecified coordinates default to `Normal`.
-Costly entries normalize to a cost of at least `2`; impassable entries report
-no movement cost.
-
-#### `TerrainType.cs` — `TerrainType`
-
-Small enum containing `Normal`, `Costly`, and `Impassable`.
-
-#### `GridPathfinder.cs` — `GridPathfinder`
-
-Stateless 8-direction Dijkstra traversal over the runtime grid. It rejects
-out-of-bounds, impassable, and other-ship-occupied cells, charges the terrain
-cost of each entered destination cell, and reconstructs the cheapest route.
-The moving ship's own occupied cells are allowed so its current footprint does
-not block its read-only route calculation.
-
-#### `MovementPathResult.cs` — `MovementPathResult`
-
-Small path result containing reachability, total terrain cost, ordered cells,
-and whether the route fits the supplied movement budget. This is a calculation
-result only; it does not mutate ship anchors, rotations, or tile occupancy.
-
-#### `ProvisionalMovementState.cs` — `ProvisionalMovementState`
-
-Stores one ship's movement-phase snapshot and current candidate anchor,
-rotation, path, cost, and validity. `GridManager` owns these states. Previewing
-does not change the authoritative ship or tile occupancy. A rejected preview
-does not overwrite the last valid candidate, so pressing into an impassable,
-out-of-bounds, occupied, or over-budget destination leaves the ship ready to
-confirm its previous valid position.
-
-#### `TestShipController.cs` — `TestShipController : MonoBehaviour`
-
-Temporary Player A input controller. It advances phases with Space, cycles
-Player A's live ships with Tab, selects weapon slots with 1/2/3, previews
-movement and rotation during `Move`, toggles domain with D, and requests
-attacks with a mouse click during `Battle`. `Escape`/`C` cancel movement
-previews; `Space` commits them and advances out of `Move`.
-
-It delegates movement preview and commit legality to `GridManager` and
-`GridManager.Combat.ResolveAttack`; it does not implement a second combat or movement
-validation path.
-
----
-
-### `Assets/Scripts/Ships/`
-
-#### `ShipInstance.cs` — `ShipInstance`
-
-Serializable runtime state for one ship. It stores identity, ownership,
-placement, movement snapshot, health, armor, current domain, profile
-definitions, and mutable charge state.
-
-`GetOccupiedCells` delegates all footprint rotation to `FootprintUtil`.
-`InitializeCharges` sets health to `maxHealth`, creates one `ChargeState` per
-weapon, and one per defense. Null ammo/uses become `-1`, meaning unlimited.
-`LogStatBlock` is a console verification helper, not game logic.
-
-#### `ShipFactory.cs` — `ShipFactory`
-
-Creates a blank `ShipInstance`, dispatches to the matching `ShipData` builder,
-assigns `shipType`, and returns the populated instance.
-
-#### `ShipData.cs` — `ShipData`
-
-Hardcoded ship-card builders:
-
-- `BuildWolfClass`: two-cell submarine; movement range 6 (testing value);
-  three weapons (MRK-1 Torpedo, Spear Anti-Ship Missile, Hippocampus Torpedo),
-  three defenses (Crash Dive, Acoustic Decoys, Deep Dive), passive sonar/
-  absolute vision, and active search sonar.
-- `BuildAthenaClass`: three-cell surface ship; movement range 4; three weapons
-  (Deck Gun, Anti-Ship Missile, Anti-Submarine Rocket), two defenses (Evasive
-  Manoeuvres, Chaff & Flares), passive absolute radar/sonar, and active
-  sub-surface search sonar.
-- `BuildSwordFishClass`: two-cell surface ship; movement range 8; three weapons
-  (Deck Gun, Anti-Ship Missile, Anti-Submarine Rocket), two defenses (Evasive
-  Manoeuvres, Chaff & Flares), passive absolute radar/sonar, and active
-  sub-surface search sonar with range 5. Present in the factory but not in the
-  current deployment roster.
-- `BuildCruiserClass`: four-cell surface ship; movement range 5; no weapons
-  defined yet; two defenses; passive absolute radar/sonar and active sonar.
-  Present in the factory but not in the current deployment roster.
-- `BuildCarrierClass`: five-cell surface ship; movement range 5; two weapons
-  (Deck Gun, Anti-Ship Missile with 5 ammo); two defenses; passive absolute
-  radar/sonar and active sonar. Present in the factory but not in the current
-  deployment roster.
-
-Each builder assigns definitions, then calls `InitializeCharges`.
-
-#### `ShipType.cs` — `ShipType`
-
-The card identifiers: `WolfClass`, `AthenaClass`, `SwordFishClass`,
-`CruiserClass`, `CarrierClass`.
-
----
-
-### `Assets/Scripts/Match/`
-
-#### `PlayerState.cs` — `PlayerState`
-
-Owns one player's `owner` identifier, requested `fleetRoster`, and live
-`ships` list. Destroyed ships are removed from `ships`; the roster is not
-currently updated.
-
-#### `MatchState.cs` — `MatchState`
-
-Owns both `PlayerState` objects. `GetPlayer` maps a `PlayerId` to its player.
-`AllShips` returns a new combined list, used by debug drawing and any logic
-that needs both sides.
-
-#### `DeploymentService.cs` — `DeploymentService`
-
-Creates and places each roster entry. Player A starts at `anchorX = 1`,
-rotation `0`; Player B starts at `gridManager.width - 3`, rotation `180`.
-The 180-degree rotation makes Player B's footprints face back toward Player A.
-Each new ship receives its owner, anchor, rotation, and
-`anchorAtTurnStart`, is placed using `PlaceShip`, and is appended to the
-player's live list. `DeployFleet` calls `CanPlaceShip` before `PlaceShip`;
-ships that fail the placement check are skipped with a warning log rather
-than placed at an invalid position.
-
----
-
-### `Assets/Scripts/Turns/`
-
-#### `TurnManager.cs` — `TurnManager : MonoBehaviour`
-
-Stores `currentPlayer` and `currentPhase`, initially Player A / Move.
-`AdvancePhase` follows `Move → Staging → Search → Battle → End`. Transitioning
-from `End` to `Move` also calls `SwitchPlayer`. It then invokes
-`PhaseChanged` with the new phase.
-
-#### `Phase.cs` and `PlayerId.cs`
-
-The phase and player enums used throughout the project.
-
----
-
-### `Assets/Scripts/FogOfWar/`
-
-#### `FogState.cs` — `FogState`
-
-Ordered knowledge states: `Unknown = 0`, `Marked = 1`, `Identified = 2`.
-The numeric ordering is intentional because `FogGrid.Upgrade` keeps the
-strongest state written to a cell.
-
-#### `FogGrid.cs` — `FogGrid`
-
-Stores one player's passive and active knowledge in two dictionaries. It has
-no geometry or ship references. `GetState` returns the stronger value from the
-two layers; `IsKnown` checks for any non-`Unknown` result. `ResetPassive` and
-`ClearActiveMarks` implement non-sticky passive recomputation and end-of-turn
-active cleanup.
-
-#### `FogManager.cs` — `FogManager`
-
-Owns Player A and Player B `FogGrid` instances. It performs passive
-recomputation on both sides, runs active scans for the acting player, and
-clears both active layers. It delegates detection shape/domain rules to
-`VisionResolver`.
-
-#### `VisionResolver.cs` — `VisionResolver`
-
-Stateless geometry and filtering implementation. It handles passive halos,
-active cones, living-ship checks, `detects` domain filtering, and
-`onlyWhileSurfaced`.
-
----
-
-### `Assets/Scripts/Combat/`
-
-#### `DomainType.cs`
-
-`Surface`, `SubSurface`, and `Both`. `Both` is used by profile definitions;
-`ShipInstance.currentDomain` is intended to be a concrete runtime domain.
-
-#### `VisionLayer.cs`
-
-Definition for one scan layer: identifier, `Halo`/`Cone` shape, range, target
-domain, `Sensor`/`Absolute` reveal type, passive/active flag, and optional
-surfaced-only restriction.
-
-#### `WeaponProfile.cs`
-
-Immutable-ish weapon definition: id, nullable ammo, target domain, weapon range,
-and d20 `RollTier` table. Runtime remaining ammo is in `ChargeState`.
-
-#### `DefenseProfile.cs`
-
-Definition for a defense: id, nullable uses, valid incoming domain, saving-throw
-tiers, and a reserved string side-effect id. No defense execution exists yet.
-
-#### `RollTier.cs`
-
-Serializable value type representing an inclusive d20 interval, label, and
-damage. Defense tables use the label and leave damage at zero.
-
-#### `ChargeState.cs`
-
-Mutable runtime uses for one weapon or defense slot. `remaining == -1` means
-infinite. `IsReady` is true when recharge time is zero and remaining is not
-zero. `remaining` is decremented by `CombatResolver.ResolveAttack` after each
-successful shot; the `-1` sentinel is never decremented.
-
-The recharge tick infrastructure is implemented: `ShipInstance.TickRecharge()`
-decrements `turnsUntilRecharge` by 1 (never below 0) for every weapon and
-defense charge, and is called at `Phase.End` for the acting player's living
-ships via `GridManager.HandlePhaseChanged`. However, nothing currently sets
-`turnsUntilRecharge` above `0` for any weapon or defense — the tick is
-presently inert and has no observable effect on gameplay. It will activate
-automatically when mines, planes, or other future systems set a recharge value
-on spend.
-
-#### `MineProfile.cs`
-
-Immutable mine definition: `id`, nullable `count`, and flat `damage`. Follows
-the same pattern as `WeaponProfile` and `DefenseProfile`. Runtime remaining
-uses tracked in `ShipInstance.mineCharges`.
-
-#### `MineTile.cs`
-
-A live mine on the board. Stores `owner`, `position`, and `damage` (copied
-from the profile at deploy time). Owned by `MatchState.mines`. Removed from
-the list immediately on detonation — no detonated flag needed.
----
-
-### `Assets/Scripts/AI/`
-
-#### `AIController.cs` — `AIController : MonoBehaviour`
-
-Temporary Player B controller. It acts once per phase by tracking
-`actedThisPhase`, moves `gridManager.ObstructionShip` toward
-`gridManager.TestShip`, and selects the highest expected-value weapon that
-passes its local charge/domain/range checks. It ultimately calls
-`GridManager.Combat.ResolveAttack`.
-
-It does not use Player B's `FogGrid`, does not select among all living ships,
-does not scan during Search, and does not move toward the center when it has no
-known target. Those are planned, not implemented.
-
----
-
-## 3. Data model and class responsibilities
-
-### `ShipInstance`
-
-`ShipInstance` is the runtime object representing one deployed ship:
-
-```text
-ShipInstance
-├── identity: shipType, owner
-├── placement: anchor, rotationDegrees, footprintOffsets
-├── movement: movementRange, anchorAtTurnStart
-├── condition: maxHealth, currentHealth, armor
-├── state: currentDomain
-├── definitions: weapons, defenses, visionLayers
-└── runtime charges: weaponCharges, defenseCharges
-```
-
-It owns data, not orchestration. Movement belongs to `GridManager`; detection
-belongs to `VisionResolver`; attack resolution belongs to `GridManager`.
-
-### `PlayerState` and `MatchState`
-
-```text
-MatchState
-├── PlayerState PlayerA
-│   ├── fleetRoster: requested card types
-│   └── ships: deployed/live ShipInstance objects
-└── PlayerState PlayerB
-    ├── fleetRoster
-    └── ships
-```
-
-The live `ships` list is the source used by fog and deployment. It is also the
-list from which destroyed ships are removed. `MatchState.AllShips` is a
-convenience aggregate, not a separate ownership store.
-
-### `FogGrid`
-
-Each player owns one logical fog view, but the implementation splits it into:
-
-- `passive`: rebuilt on every `Search` transition.
-- `active`: temporary marks created during the acting player's `Search`.
-
-The visible result is the maximum state from both layers. This means an active
-`Marked` result cannot downgrade a passive `Identified` result. Clearing active
-marks does not remove passive knowledge until the next passive reset.
-
-### Profiles and charges
-
-`WeaponProfile`, `DefenseProfile`, and `VisionLayer` describe capabilities.
-`ChargeState` holds mutable use/recharge state separately. This keeps a ship
-card definition independent from one particular match's remaining ammunition.
-
----
-
-## 4. Fog of War implementation
-
-### Fog states
-
-| State | Meaning in this implementation |
-| --- | --- |
-| `Unknown` | Neither passive nor active layer currently knows the cell. |
-| `Marked` | A sensor has detected an enemy cell, but the ship identity/type is not revealed. |
-| `Identified` | An absolute vision layer has detected the cell and identifies its contents according to the milestone's model. |
-
-The current attack gate treats both `Marked` and `Identified` as known. No
-consumer currently behaves differently based on the two states beyond how they
-are produced.
-
-### Passive detection
-
-Passive and active detection are triggered when `TurnManager` changes to
-`Phase.Search`.
-The actual chain is:
-
-```text
-TurnManager.AdvancePhase()
-  → PhaseChanged(Phase.Search)
-  → GridManager.HandlePhaseChanged(Phase.Search)
-  → FogManager.RecomputeAllPassive(match)
-  → RecomputePassive(PlayerA, match)
-  → RecomputePassive(PlayerB, match)
-```
-
-For each owner, `RecomputePassive`:
-
-1. Gets that owner's `FogGrid`.
-2. Gets the opposing player's current live `ships` list.
-3. Clears the passive dictionary.
-4. Iterates every living ship in the owner's live list.
-5. Iterates that ship's passive `VisionLayer` definitions.
-6. Converts `Absolute` to `Identified`, otherwise `Marked`.
-7. Calls `VisionResolver.GetDetectedCells`.
-8. Writes each returned enemy cell with `MarkPassive`.
-
-`FogGrid.Upgrade` prevents a weaker result from replacing a stronger one.
-Therefore a sensor cannot downgrade an absolute result, regardless of profile
-iteration order.
-
-Passive visibility is non-sticky: the passive dictionary is rebuilt from the
-current ship positions at every `Search`. A previous position is forgotten
-unless a current living ship detects it again.
-
-### Vision layer filtering
-
-`VisionResolver.GetDetectedCells` applies these filters before returning cells:
-
-1. A dead source (`currentHealth <= 0`) detects nothing.
-2. A layer with `onlyWhileSurfaced` detects nothing if the source is not
-   `Surface`.
-3. Shapes other than `Halo` or `Cone` are ignored.
-4. Dead enemies are skipped.
-5. A layer whose `detects` is not `Both` must equal the enemy's current domain.
-6. Only enemy occupied cells inside the shape are returned.
-7. Each candidate cell is tested for line-of-sight using
-   `VisionResolver.TryGetFirstBlockingCell` (supercover Bresenham traversal).
-   Only `Impassable` intermediate cells block visibility; `Normal` and `Costly`
-   are transparent. A blocked cell is excluded from detected cells and recorded
-   in `VisionScanResult.BlockedCells` with the first blocking coordinate.
-
-### Halo geometry
-
-For a halo, `VisionResolver` calculates the source's full occupied cells and
-checks each enemy cell against every source cell using Chebyshev distance:
-
-```text
-distance = max(abs(enemy.x - source.x), abs(enemy.y - source.y))
-```
-
-The enemy cell is detected if any source cell has distance less than or equal
-to `layer.range`. The nearest occupied cell is used, not only the anchor. This
-matters for multi-cell ships: a long hull projects vision from all of its
-cells.
-
-### Active detection
-
-Active scanning is player-activated during `Phase.Search`. Passive
-recomputation still runs automatically on entering Search, but the cone scan
-requires explicit player input:
-
-```text
-Player presses S during Search
-  → GridManager.ActivateActiveScan(ship)
-      → rejected if phase is not Search
-      → rejected if fleet already scanned this phase (fleetScannedThisPhase)
-      → finds the ship's first non-passive Cone layer
-      → creates ActiveScanPreviewState (bow, forward)
-
-Player presses Q / E
-  → GridManager.RotateActiveScan(quarterTurns)
-      → rotates ActiveScanPreviewState.Forward
-
-Player presses Enter
-  → GridManager.ConfirmActiveScan()
-      → rejected if phase is not Search
-      → rejected if fleet already scanned this phase
-      → FogManager.RunActiveSearch(ship, layer, bow, forward, match)
-      → MarkActive(cell, Marked) for each detected cell
-      → clears ActiveScanPreviewState
-      → sets fleetScannedThisPhase = true (fleet scan limit: 1)
-
-Player presses Escape / C
-  → GridManager.CancelActiveScan()
-      → discards ActiveScanPreviewState with no fog change
-```
-
-Active scans deliberately write `Marked` even if the layer's definition says
-`Absolute`; the rule is that active search reveals presence, not identity.
-
-Fleet scan limit: exactly one confirmed active scan per player per Search phase.
-Once any ship in the fleet confirms an active scan, no further active scans can be
-activated until the player's next Search phase.
-
-`activeScanPreview` and `fleetScannedThisPhase` are cleared at phase transitions: entering `Search` and entering `End`.
-
-```text
-Phase.End
-  → GridManager.HandlePhaseChanged(End)
-  → FogManager.ClearAllActiveMarks()
-  → activeScanPreview = null
-  → fleetScannedThisPhase = false
-```
-
-### `VisionResolver` geometry
-
-The project uses integer grid coordinates. A forward vector is one of the
-cardinal/diagonal unit vectors produced by the footprint-derived facing. For a
-cone, the bow is the occupied cell furthest from the anchor in the forward
-direction. The cone begins one cell beyond the bow.
-
-```text
-                 forward
-                    →
-          xxx       d = 1, lateral -1..1
-        xxxxx       d = 2, lateral -2..2
-      xxxxxxx       d = 3, lateral -3..3
-```
-
-The actual algorithm is:
-
-```text
-perpendicular = (-forward.y, forward.x)
-for d = 1 .. range:
-    halfWidth = d * ConeSlope
-    for l = -halfWidth .. halfWidth:
-        add origin + forward*d + perpendicular*l
-```
-
-`ConeSlope` is `1`. Before any duplicate coordinates are considered, distance
-`d` contributes `2*d + 1` cells. Therefore:
-
-- Range 2: `3 + 5 = 8` cells.
-- Range 4: `3 + 5 + 7 + 9 = 24` cells.
-
-`HashSet<Vector2Int>` removes any duplicate positions. `GetBowAndFacing`
-derives the forward vector from the actual occupied footprint so the scan
-cannot use a different rotation convention from ship placement. A one-cell
-ship defaults to `Vector2Int.right`.
-
----
-
-## 5. Turn and phase flow
-
-The complete phase cycle is:
-
-```text
-Player A Move
-    ↓
-Player A Staging       phase advances only when CanAdvancePhase(Move) passes;
-                       ships may not move adjacent to each other (one-tile
-                       exclusion zone enforced in CanPlaceShip and preview checks);
-                       SwordFish can deploy a mine with M key (DeployMine)
-    ↓
-Player A Search        passive recompute, then active scan
-    ↓
-Player A Battle        input/AI may request attacks
-    ↓
-Player A End           clear active marks
-    ↓
-Player B Move
-    ↓
-... repeat ...
-```
-
-`AdvancePhase` changes the enum first, switches player only during the
-`End → Move` transition, logs, then raises the event. Subscribers receive the
-new phase, not the old one.
-
-`TestShipController` snapshots all Player A ships' anchors when it observes a
-new Move phase. `AIController` snapshots only its current first ship on a new
-Player B Move phase. The snapshot is used by `GridManager.MoveShip` as the
-origin for the movement-range budget.
-
-There is no Search input selection, and no End-phase cooldown or win check.
-
----
-
-## 6. Combat and Fog interaction
-
-### Human input path
-
-```text
-TestShipController.Update()
-  → HandleAttackInput(ship)
-  → clicked tile's Occupant
-  → GridManager.Combat.ResolveAttack(attacker, target, weapon)
-```
-
-The controller performs only input-level checks: clicked tile exists, has an
-occupant, and is not friendly; selected weapon index is valid. The authoritative
-attack path is `CombatResolver.ResolveAttack`.
-
-### `CombatResolver.ResolveAttack`
-
-The current validation order is:
-
-1. Reject a dead target (logs reason).
-2. Find the attacker's `ChargeState` by weapon id and require `IsReady` (logs reason).
-3. Require the weapon target domain to match the target domain or be `Both` (logs reason).
-4. Iterate all attacker occupied cells × all target occupied cells to find the
-   minimum Chebyshev distance and collect every in-range pair.
-5. Reject if weapon range is less than that minimum distance (logs reason).
-6. Call `IsTargetKnown` — reject if no target cell is in the attacker's fog.
-7. Call `HasClearLineOfFire` on the in-range pairs. At least one pair must have
-   a clear supercover Bresenham path through intermediate cells; only
-   `Impassable` terrain blocks. Logs `BLOCKED_LINE_OF_FIRE` with attacker,
-   weapon, target, pair, and first blocker when every pair is blocked.
-8. Roll one d20 with `RollWeapon`.
-9. Apply armor reduction via `ApplyArmor(result.damage, target.armor)`:
-   `effectiveDamage = round(rawDamage * (1 - armor * 0.0015))`. Miss
-   (`rawDamage == 0`) is unchanged. Non-zero results are clamped to minimum 1.
-   The log shows both raw and reduced values.
-10. Subtract `effectiveDamage` from target health.
-11. If health reaches zero, remove the target from grid occupancy and its
-    owner's live `ships` list.
-
-`IsTargetKnown` gets the attacker's fog grid and returns true if any target
-occupied cell has a non-`Unknown` state. It does not require every target cell
-to be known. This means a multi-cell target can be attacked when only one of its
-cells is detected.
-
-`ResolveAttack` now decrements `weaponCharge.remaining` after `RollWeapon`
-succeeds. The `-1` infinite sentinel is never touched. The console log includes
-remaining ammo after the shot. Once remaining reaches zero, `IsReady` returns
-false and subsequent shots are rejected at step 2. Armor, defenses, recharge,
-and side effects are not yet implemented. It returns `true` when resolution was
-performed (including a d20 miss). It returns `false` on any rejection, with a
-log identifying the cause.
-
-### AI attack path
-
-```text
-AIController.Update()
-  → DecideAttack(aiShip, enemyShip)
-  → CanFire for each weapon
-  → ExpectedValue for legal weapons
-  → GridManager.Combat.ResolveAttack(aiShip, enemyShip, best)
-```
-
-`CanFire` duplicates charge/domain/range checks for weapon selection, but the
-actual final validation remains in `CombatResolver.ResolveAttack`. It currently omits the fog
-check because the AI is not yet fog-aware; `ResolveAttack` still applies the
-fog gate when the AI calls it.
-
----
-
-## 7. Destroyed ship behavior
-
-When a resolved attack reduces `currentHealth` to zero:
-
-```text
-ResolveAttack
-  → Debug.Log destroyed message
-  → RemoveShip(target)
-       clears every tile whose Occupant is target
-  → match.GetPlayer(target.owner).ships.Remove(target)
-```
-
-Removing the ship from the live fleet has several downstream effects:
-
-- Future passive and active fog loops no longer include it as a source or
-  target.
-- `MatchState.AllShips()` no longer returns it.
-- The grid no longer reports it as an occupant.
-- `TestShipController` clamps its selected Player A index against the smaller
-  list.
-
-There is no separate destroyed flag and no win-condition check. A caller that
-still holds a reference can see `currentHealth <= 0`, but normal match systems
-use the live list.
-
----
-
-## 8. AI implementation
-
-### CURRENT IMPLEMENTATION
-
-`AIController.Update`:
-
-1. Requires serialized `gridManager` and `turnManager`.
-2. Returns unless `CurrentPlayer` is Player B.
-3. Resets `actedThisPhase` when the phase/player changes.
-4. On a new Move phase, snapshots `ObstructionShip.anchorAtTurnStart`.
-5. Uses only `gridManager.ObstructionShip` and `gridManager.TestShip`.
-6. During Move, moves one Chebyshev step toward the target's anchor.
-7. During Battle, scores every weapon by average d20 damage among its tiers,
-   after charge/domain/range checks, and fires the highest score.
-8. Does nothing during Search.
-
-The first ship properties on `GridManager` are simply `playerA.ships[0]` and
-`playerB.ships[0]`, so the current AI controls only Player B's first deployed
-ship (the Wolf).
-
-### PLANNED / NOT YET IMPLEMENTED
-
-The Milestone 5 plan calls for:
-
-- finding the nearest enemy with a known cell in the AI's own `FogGrid`;
-- not chasing or attacking hidden targets;
-- moving toward map center when no target is known;
-- acting for every living AI ship;
-- using Search to build knowledge.
-
-None of those changes should be documented as current behavior until
-`AIController` is changed and verified.
-
-One additional known issue is that `actedThisPhase` is set after the decision.
-The planned housekeeping item is to set it before acting so an exception cannot
-cause repeated frame attempts.
-
----
-
-## 9. Deployment
-
-`GridManager.Start` constructs both `PlayerState` objects with:
-
-```text
-Player A: WolfClass, AthenaClass
-Player B: WolfClass, AthenaClass
-```
-
-`DeploymentService.DeployAll` then calls `DeployFleet` twice:
-
-| Player | Anchor X | Rotation | Initial Y values |
-| --- | ---: | ---: | --- |
-| Player A | `1` | `0` | `1`, `4`, ... |
-| Player B | `gridManager.width - 3` | `180` | `1`, `4`, ... |
-
-For each card type, `DeployFleet`:
-
-1. Calls `ShipFactory.CreateShip`.
-2. Assigns `owner`.
-3. Assigns anchor and rotation.
-4. Copies the anchor into `anchorAtTurnStart`.
-5. Calculates occupied cells.
-6. Calls `GridManager.PlaceShip`.
-7. Appends the ship to `PlayerState.ships`.
-8. Logs the stat block.
-
-Player B is rotated 180 degrees so the same footprint definitions face toward
-the center of the map from the opposite side. `DeployFleet` calls
-`CanPlaceShip` before `PlaceShip`; a ship that fails the placement check is
-skipped with a warning and not added to the player's fleet.
-
----
-
-## 10. Follow-the-code walkthroughs
-
-### Flow A: starting a match
-
-```text
-Unity calls GridManager.Awake
-  → BuildGrid creates every rectangular Tile
-  → Fog = new FogManager
-
-Unity calls GridManager.Start
-  → create PlayerState A and B with Wolf/Athena rosters
-  → create MatchState
-  → DeploymentService.DeployAll
-      → ShipFactory → ShipData → InitializeCharges
-      → assign owner/anchor/rotation
-      → PlaceShip
-      → add to live fleet
-  → subscribe HandlePhaseChanged to TurnManager.PhaseChanged
-```
-
-`TurnManager.Start` independently logs the serialized initial Player A / Move
-state. Fog is not computed until the first transition into Search.
-
-### Flow B: passive fog update
-
-```text
-AdvancePhase: Staging → Search
-  → PhaseChanged(Search)
-  → GridManager.HandlePhaseChanged
-  → FogManager.RecomputeAllPassive
-  → reset Player A passive dictionary
-  → resolve Player A passive layers against Player B live ships
-  → reset Player B passive dictionary
-  → resolve Player B passive layers against Player A live ships
-```
-
-Each result is stored by enemy occupied cell, not as a full-board coverage map.
-Active scanning does not run automatically on Search; it requires player input.
-
-### Flow C: player-activated active scan
-
-```text
-Player presses S during Search
-  → TestShipController.HandleActiveScanInput
-  → GridManager.ActivateActiveScan(selectedShip)
-      → rejected if not Search phase or fleet already scanned this phase
-  → VisionResolver.GetBowAndFacing → derives bow and forward
-  → ActiveScanPreviewState created (ship, layer, bow, forward)
-  → GridView.DrawDebugCones renders the cone preview each frame
-
-Player presses Q or E
-  → GridManager.RotateActiveScan(±1)
-  → ActiveScanPreviewState.Rotate updates Forward
-  → preview updates in Scene view
-
-Player presses Enter
-  → GridManager.ConfirmActiveScan()
-      → rejected if not Search phase or fleet already scanned this phase
-  → FogManager.RunActiveSearch(ship, layer, bow, forward, match)
-  → VisionResolver.GetScanResult builds cone, checks LOS per enemy cell
-  → MarkActive(cell, Marked) for each unblocked detected cell
-  → ActiveScanPreviewState cleared
-  → fleetScannedThisPhase set to true (no more active scans this turn)
-```
-
-Active marks remain through Battle and are cleared at End.
-
-### Flow D: Player A attacks
-
-```text
-Mouse click during Battle
-  → convert screen position to Vector2Int
-  → GetTile(clickedPos)
-  → read Occupant
-  → ResolveAttack
-      → dead / charge / domain checks (each logs reason on rejection)
-      → build in-range attacker×target cell pairs, check min distance
-      → IsTargetKnown(Player A fog)
-      → HasClearLineOfFire: test each in-range pair via TryGetFirstBlockingCell
-          → at least one unblocked pair → proceed
-          → all pairs blocked → log BLOCKED_LINE_OF_FIRE, return false
-      → d20 tier and damage
-      → destroy cleanup if HP <= 0
-```
-
-### Flow E: AI attacks
-
-```text
-Player B Battle Update
-  → DecideAttack(ObstructionShip, TestShip)
-  → CanFire each weapon
-  → ExpectedValue each legal weapon
-  → ResolveAttack
-      → final checks, including Player B fog gate
-      → roll and apply damage
-```
-
-The AI's selection is not based on fog, even though the final attack gate is.
-Consequently it may select a globally known target that its fog does not know,
-then receive `Target not known.` from `ResolveAttack`.
-
-### Flow F: ship destruction
-
-```text
-successful ResolveAttack
-  → target.currentHealth -= roll damage
-  → RemoveShip(target) clears Tile.Occupant references
-  → remove target from owning PlayerState.ships
-  → future fog passes omit it
-```
-
-### Flow G: detecting a SubSurface ship
-
-For a passive sensor:
-
-- The source must be alive.
-- A layer with `detects = Both` can see a `SubSurface` target.
-- A `detects = Surface` layer cannot.
-- A halo checks the nearest source hull cell.
-- A `Sensor` layer writes `Marked`.
-- An `Absolute` layer writes `Identified`.
-
-For active Search Sonar:
-
-- The source must be alive and have a non-passive cone layer.
-- The cone is built from the source bow and rotation-derived forward vector.
-- `detects = SubSurface` accepts only a submerged enemy.
-- The result is written as `Marked`, never `Identified`.
-- The mark is cleared when `End` is entered.
-
-For absolute vision:
-
-- A matching `Absolute` layer writes `Identified`.
-- `onlyWhileSurfaced` is checked against the source's domain, not the target's.
-- The current Wolf absolute layer is disabled when the Wolf submerges.
-
----
-
-## 11. Important algorithms
-
-### Footprint rotation
-
-`FootprintUtil.RotateOffsets` normalizes any degree value into `[0, 359]` and
-supports only quarter turns:
-
-```text
-0°   (x, y)
-90°  (-y, x)
-180° (-x, -y)
-270° (y, -x)
-```
-
-Unsupported angles log a warning and use the unrotated offset. `GetWorldCells`
-then adds the anchor to every rotated offset.
-
-### Placement and movement
-
-`CanPlaceShip` calculates candidate cells, rejects out-of-bounds cells, and
-rejects occupants belonging to another ship. A ship may overlap itself, which
-allows rotation and movement checks before removing its current cells.
-
-`MoveShip` first checks Chebyshev distance from `anchorAtTurnStart`, then calls
-`CanPlaceShip`. Only after both checks pass does it remove old occupancy,
-mutate anchor/rotation, and place new occupancy. This is the project's atomic
-movement path.
-
-### Fog state transition
-
-`MarkPassive` and `MarkActive` both call `Upgrade`. Since enum values are
-ordered, writing `Identified` after `Marked` keeps `Identified`, and writing
-`Marked` after `Identified` has no effect. The two layers are then combined by
-`GetState` using the same ordering.
-
-### Expected damage
-
-`AIController.ExpectedValue` calculates:
-
-```text
-sum((tier width / 20) * tier damage)
-```
-
-It is a weapon-ranking helper only. It does not roll, consume ammunition, or
-change state.
-
----
-
-## 12. Class relationship diagram
-
-```text
-                         TurnManager
-                             |
-                     PhaseChanged event
-                             |
-                         GridManager
-              _____________/ | \_______________
-             /               |                  \
-        MatchState          FogManager          TestShipController
-        /        \          /       \                  |
- PlayerState  PlayerState FogGrid  FogGrid              |
-      |            |          \      /                  |
-      +-- ships ---+           VisionResolver            |
-             |                       |                  |
-       ShipInstance -----------------+          ResolveAttack
-        /   |    \                                  |
-       /    |     \                           WeaponProfile
-  footprint profiles charges                         |
-       |      |        |                         ChargeState
- FootprintUtil  VisionLayer                         |
-       |         |                             RollTier / DomainType
-       +---------+
-
-DeploymentService → ShipFactory → ShipData → ShipInstance
-AIController ------------------------------→ GridManager
-```
-
----
-
-## 13. Where should I make changes?
-
-| Desired change | Primary location | Reason |
+`GridManager.CanPlaceShip` checks every candidate footprint cell for bounds
+and another ship's occupancy. It does **not** enforce a one-cell buffer, check
+terrain passability, or call an exclusion-zone helper. `PlaceShip` writes
+occupancy; `RemoveShip` clears every tile occupied by that ship. Deployment
+calls `CanPlaceShip` before `PlaceShip`.
+
+`GridPathfinder` calculates read-only, eight-direction Dijkstra routes. It
+rejects impassable and other-ship-occupied anchor cells, allows the moving
+ship's own cells, and charges the cost of each entered cell. The path result
+contains reachability, ordered cells, total cost, and whether cost fits the
+budget. Pathfinder traversal checks the anchor cell, so the final full
+footprint is checked separately by `GridManager`.
+
+For Player A, `PreviewMove` calculates from each ship's original snapshot,
+requires a path within budget, and checks the candidate footprint for bounds,
+passable terrain, authoritative occupants, and other provisional footprints.
+An invalid preview leaves its last valid candidate intact. The preview does
+not change ship anchors or occupancy. `ConfirmProvisionalMovement` validates
+all current candidates, rejects overlapping candidate footprints, removes
+their old occupancy, places all new footprints, resolves mines for the moved
+ships, and clears preview state. `CancelProvisionalMovement` clears all
+previews. Escape/C clear uncommitted previews and stop an active drag;
+authoritative anchors remain at their Move-start positions. After successful
+confirmation and entry to Staging, ship movement is committed and cannot be
+canceled. A direct `AdvancePhase` call is rejected before the transition if
+the remaining provisional state cannot be confirmed.
+
+`MoveShip`, still used by AI, is a separate distance-based path. It compares
+Chebyshev distance from `anchorAtTurnStart` to the requested anchor with
+`movementRange`, then calls `CanPlaceShip`, removes and places occupancy,
+and resolves mines. It does not use Dijkstra cost or provisional candidates.
+AI candidate selection uses reachable anchor cells and `CanPlaceShip`, but
+the final execution still uses `MoveShip`.
+
+## Fleets and cards
+
+`GridManager.Start` requests these rosters, in this order:
+
+| Player | Requested ships | Initial anchors |
 | --- | --- | --- |
-| Change board dimensions or tile creation | `GridManager.BuildGrid` and serialized fields | Grid ownership lives there. |
-| Author map terrain | `MapDefinition` | Reusable dimensions and sparse coordinate-to-terrain entries. |
-| Query runtime terrain | `GridManager.GetTerrainType`, `IsTerrainPassable`, `GetTerrainMovementCost` | Read terrain data without changing current movement semantics. |
-| Calculate a weighted route | `GridPathfinder` via `GridManager.CalculateMovementPath` | Read-only 8-direction Dijkstra; does not move ships or mutate occupancy. |
-| Change footprint rotation/world-cell math | `FootprintUtil` | All placement and vision hull calculations reuse it. |
-| Change placement collision rules | `GridManager.CanPlaceShip` | This is the single placement validation path, including the one-tile exclusion zone. |
-| Change movement budget or mutation | `GridManager.MoveShip` | It owns range validation and atomic grid updates. |
-| Change ship stats or sensor profiles | `ShipData` | Hardcoded card definitions are built there. |
-| Add a ship card | `ShipType`, `ShipFactory`, and `ShipData` | Factory dispatch and card data are separate by design. Five cards exist: Wolf, Athena, SwordFish, Cruiser, Carrier. Only Wolf and Athena are in the active deployment roster. |
-| Change initial fleets/anchors | `GridManager.Start` and `DeploymentService` | Match creation and deployment are here. |
-| Change phase order/player switching | `TurnManager` and `Phase` | `TurnManager` is the event source. |
-| Change when fog runs | `GridManager.HandlePhaseChanged` / `FogManager` | The former wires phases; the latter coordinates operations. |
-| Change stored fog state | `FogGrid` | It owns passive/active dictionaries and state upgrades. |
-| Change halo/cone geometry or domain filtering | `VisionResolver` | It is the stateless vision rules layer. |
-| Change attack legality/resolution | `CombatResolver.ResolveAttack` | This is the authoritative attack path, exposed through `GridManager.Combat`. |
-| Change terrain line-of-fire logic | `CombatResolver.HasClearLineOfFire` and `VisionResolver.TryGetFirstBlockingCell` | `HasClearLineOfFire` iterates in-range pairs; the supercover traversal lives in `VisionResolver`. |
-| Change Player A input | `TestShipController` | It should request manager operations rather than duplicate rules. |
-| Implement fog-aware AI | `AIController` plus `FogManager.GetFogGrid` | AI decisions need its own fog view; final attacks still use `CombatResolver.ResolveAttack`. |
-| Add armor/defenses/ammo spending | Future combat work around `CombatResolver.ResolveAttack`, `ChargeState`, and profiles | Ammo deduction and armor reduction are implemented. Defense saves, recharge, and side effects are not. |
+| A | Wolf, Athena, SwordFish, Carrier, Cruiser | `(1,1)`, `(1,4)`, `(1,7)`, `(1,10)`, `(1,13)`; rotation 0° |
+| B | Wolf, Athena | `(width-3,1)`, `(width-3,4)`; rotation 180° |
 
-Do not put vision geometry in `FogGrid`, attack resolution in `ShipInstance`,
-or a second placement validator in an input/controller class.
+`DeploymentService` increments Y by 3 only after successful placement.
+Invalid placements are skipped with a warning and are not added to the live
+list. In the checked-in 30 by 15 sample configuration, Player A's Cruiser
+candidate at Y 13 is in bounds because its footprint extends along X.
+`PlayerState.fleetRoster` remains the requested roster after a ship dies;
+`PlayerState.ships` is the live roster.
 
----
-
-## 14. Temporary and debug code
-
-| Code | Location | Purpose | Safe removal? |
+| `ShipData` card | Hull / move / domain | Weapons | Vision and other capabilities |
 | --- | --- | --- | --- |
-| `[Fog]` logs | Formerly in `FogManager` | Verified passive and active detected cells in the Console. | Removed; fog state is unchanged. |
-| `FogGrid.Describe` | Formerly in `FogGrid.cs` | Formatted both dictionaries for temporary logs. | Removed; no caller remains. |
-| `Debug Recompute Fog` | `GridManager.cs` context menu | Manually recomputes passive fog and prints per-cell observations. | Yes; it is not part of the phase flow. |
-| `Debug Cone Counts` | Formerly in `GridManager.cs` | Confirmed cone cell counts for temporary verification. | Removed; it only logged. |
-| `DrawDebugCones` | `GridView.OnDrawGizmos` | Displays active cone geometry for visual verification and planned scan UI. | No; retained as a visualization surface. |
-| `DrawDebugHalos` | `GridView.OnDrawGizmos` | Displays passive halo coverage with hull-cell range and full LOS. Clear cells draw cyan; terrain-blocked cells draw dark red. Retained as a visualization surface. | No; retained as a visualization surface. |
-| `[AI]` logs | `AIController.cs` | Shows movement and weapon decisions. | Optional; useful while AI remains prototype. |
-| `LogStatBlock` and occupancy logs | `ShipInstance`, `DeploymentService`, `GridManager` | Verifies card data and deployment. | Optional verification helpers. |
+| Wolf | 2 cells, 500 HP, armor 50, move 6, starts Surface | MRK-1 Torpedo, Spear Anti-Ship Missile, Hippocampus Torpedo | Passive Sensor sonar range 2 detects Both; surfaced-only Absolute halo range 4; active Sensor cone range 4 detects Both. Three defense profiles. |
+| Athena | 3 cells, 2000 HP, armor 150, move 4, Surface | Deck Gun, Anti-Ship Missile, Anti-Submarine Rocket | Passive Absolute halo range 2 and active Sensor cone range 2, both detect Both. Two defense profiles. |
+| SwordFish | 2 cells, 1000 HP, armor 100, move 8, Surface | Same three weapon types as Athena | Passive Absolute radar range 2 detects Surface; active Sensor sonar range 5 detects Both; Contact Mine profile: count 2, damage 600, recharge time 2. Two defense profiles. |
+| Carrier | 5 cells, 1600 HP, armor 200, move 5, Surface | Deck Gun; Anti-Ship Missile with 5 ammo | Passive Absolute halo range 2 and active Sensor cone range 2 detect Both; Recon Plane profile: one sortie, launch 4, move 5, vision 3, fuel 3. Two defense profiles. |
+| Cruiser | 4 cells, 1200 HP, armor 100, move 5, Surface | Deck Gun, Anti-Ship Missile, Anti-Submarine Rocket | Passive Absolute halo range 2 and active Sensor cone range 5 detect Both. Two defense profiles. |
 
----
+`ShipFactory` dispatches `ShipType` to these builders.
+`ShipInstance.InitializeCharges` sets current health and creates runtime
+weapon, defense, mine, and plane charge lists. Nullable ammunition or uses
+become the `-1` infinite sentinel. `LogStatBlock` is a console helper.
+`WeaponProfile`, `DefenseProfile`, `RollTier`, `VisionLayer`,
+`MineProfile`, and `PlaneProfile` define card capabilities; `ChargeState`
+holds mutable remaining uses, capacity, and recharge countdown.
 
-## 15. Current implementation versus planned implementation
+The hardcoded weapon tables retain these prototype values. Roll bands are
+inclusive; unlisted damage in a Miss band is zero.
 
-| System | Current implementation | Planned / missing |
-| --- | --- | --- |
-| Terrain | `MapDefinition` loads normal, costly, and impassable data into runtime `Tile` objects; unassigned maps default to all `Normal`. `GridPathfinder` consumes that data for read-only weighted routes. | Additional terrain types if needed; no A* planned. |
-| Vision LOS | Phase 9A implemented: `VisionResolver.TryGetFirstBlockingCell` runs supercover Bresenham per candidate cell. Only `Impassable` blocks; `Costly` is transparent. Corner-adjacent blockers are handled conservatively. | Player-facing fog/visibility UI. |
-| Attack line-of-fire | Phase 9B implemented: `CombatResolver.HasClearLineOfFire` tests every in-range cell pair via the same supercover traversal. At least one clear pair allows the attack; all blocked → rejected before rolling. | — |
-| Fog storage | Two `FogGrid` objects, each with passive and active dictionaries. | Player-facing fog/visibility UI. |
-| Passive detection | `Search` recomputes live enemy cells using halo/cone rules, domain filters, and terrain LOS. | — |
-| Active Search | Player-activated during Search: `S` activates, `Q`/`E` rotates, `Escape`/`C` cancels. Confirmation is handled by UI. Only the selected ship's non-passive cone layer is fired per activation. | Scanning for all living ships in a single Search phase. |
-| Fog lifetime | Passive is rebuilt at `Search`; active is cleared at `End`; no ghost positions. | Persistent last-known markers, explicitly deferred. |
-| Combat gate | `ResolveAttack` calls `IsTargetKnown`; any marked/identified target cell is sufficient. | Combat reveal hook after firing. |
-| Combat resolution | d20 tier damage, armor reduction (`ApplyArmor`), ammo deduction, and destroyed-ship cleanup. All rejections log their cause. | Defense saves, recharge, side effects. |
-| AI | One Player B ship homes on Player A's first ship and greedily picks a weapon. `CanFire` pre-check includes terrain line-of-fire gate. | Fog-aware targets, center fallback, all living ships, active-search decisions. |
-| Deployment | Both players receive Wolf and Athena at hardcoded anchors. `CanPlaceShip` validation runs before each placement. | Player-controlled deployment. |
-| Staging — mines | SwordFish deploys `Contact Mine` (600 flat damage, no roll, no armor, no defenses) one cell behind stern during Staging with `M` key. Mines in `MatchState.mines` trigger on confirmed movement (human and AI). Enemy mines hidden until active sonar scan reveals them as `Marked`. | Planes, repair ship. |
-| Movement | Keyboard and pointer dragging create read-only provisional previews from the movement-phase snapshot. Escape or C cancels back to the movement-phase positions, and Space commits all valid previews before leaving Move. `Enter` is not a movement commit key. `GridManager` commits all valid ship previews atomically using the Dijkstra result. | Richer movement UI. |
-| Cleanup | Terrain, board, cone, and halo verification Gizmos remain; temporary fog logs and cone-count commands are removed. | Remove other prototype-only verification helpers when no longer useful. |
-| Match end | Dead ships are removed from grid and live fleet. | Win-condition/game-over handling. |
+| Weapon and users | Ammo | Range / target | d20 outcomes |
+| --- | ---: | --- | --- |
+| MRK-1 Torpedo — Wolf | 4 | 4 / SubSurface | 1–10 Miss; 11–20 800 |
+| Spear Anti-Ship Missile — Wolf | 2 | 7 / Surface | 1–3 Miss; 4–17 500; 18–20 750 |
+| Hippocampus Torpedo — Wolf | 3 | 5 / Both | 1–6 Miss; 7–16 1000; 17–20 1500 |
+| Deck Gun — Athena, SwordFish, Carrier, Cruiser | Infinite | 6 / Surface | 1–10 Miss; 11–20 300 |
+| Anti-Ship Missile — Athena, SwordFish, Cruiser | 2 | 8 / Surface | 1–3 Miss; 4–17 500; 18–20 750 |
+| Anti-Ship Missile — Carrier | 5 | 8 / Surface | 1–3 Miss; 4–17 500; 18–20 750 |
+| Anti-Submarine Rocket — Athena, SwordFish, Cruiser | 2 | 8 / SubSurface | 1–5 Miss; 6–20 600 |
 
----
+Wolf defines Crash Dive, Acoustic Decoys, and Deep Dive defenses; the
+surface ship cards define Evasive Manouvers and Chaff & Flares. Their
+saving-throw bands and uses are stored on `DefenseProfile`, but none are
+consulted by `RequestAttack`. The names in code include the
+`Manouvers` spelling.
 
-## 16. Glossary
+## Fog and vision
 
-| Term | Meaning |
+Each `FogGrid` has separate passive and active dictionaries. `Unknown = 0`,
+`Marked = 1`, and `Identified = 2`; `Upgrade` preserves the stronger state
+within a layer and `GetState` returns the stronger layer result. Both Marked
+and Identified count as known for attacks. These values represent knowledge
+of a **cell**; `FogGrid` does not own a ship identity or scan coverage map.
+
+`FogManager.RecomputeAllPassive` clears each player's
+passive layer and scans living opposing ships with every friendly passive
+`VisionLayer`. It writes Identified for Absolute layers and Marked for Sensor
+layers. Owned planes contribute passive Absolute halo detection. Passive fog
+is refreshed after deployment commits, committed ship movement or rotation,
+domain changes, plane deployment or committed movement, plane removal,
+ship destruction, Search entry, and End fuel ticks. Ship and plane previews
+leave passive fog on committed positions. The Wolf's passive Absolute layer
+works while surfaced or submerged. Active marks persist until End unless explicitly cleared for a
+destroyed ship. Passive information is rebuilt from current detections, not
+stored as persistent last-known contact memory.
+
+`VisionResolver` skips dead ships, honors `onlyWhileSurfaced`, filters
+target domains (`Both` accepts either concrete domain), and returns only
+enemy occupied cells within the scan shape. Halo uses Chebyshev distance from
+any source hull cell. A cone begins one cell beyond the bow derived from the
+ship footprint, with half-width `d * ConeSlope` at distance `d`;
+`ConeSlope = 1`. `GetConeCells` itself can produce off-board cells.
+Ship vision checks a ray from a suitable hull cell (or the bow for a cone)
+through `TryGetFirstBlockingCell`. Its supercover traversal includes side
+cells on corner ties, excludes source and target endpoints, and treats only
+Impassable terrain as blocking. Plane halo vision uses its position and
+domain filter but does not check terrain LOS.
+
+Active scanning is available during Search through
+`GridManager.ActivateActiveScan`, `SetActiveScanForward` /
+`RotateActiveScan`, and `ConfirmActiveScan`. Activation chooses the
+ship's first non-passive Cone layer. Confirmation calls
+`FogManager.RunActiveSearch`, writes Marked even if a definition is
+Absolute, and sets one shared `fleetScannedThisPhase` flag. Thus at most
+one confirmed fleet scan occurs for the acting player in that Search phase.
+Cancel discards a preview without marking cells. The scan flag and preview
+reset on entering Search and End.
+
+The current mine reveal implementation deserves care: `RunActiveSearch`
+checks enemy mine positions against `scan.DetectedCells`, which contains
+detected **enemy ship cells**, not all cone cells. It therefore does not
+generally reveal a mine merely because its cell lies in the cone. Since a
+deployed mine starts on an unoccupied cell and is removed when a ship
+triggers it, the documented intent of general active sonar mine reveal is
+not established by this code.
+
+`FogManager.ClearMarksForShip` removes a destroyed ship's occupied cells
+from both players' passive and active layers. This prevents stale marks at
+those cells, though it also removes any overlapping knowledge there until
+the next recomputation.
+
+## Combat
+
+`CombatResolver.RequestAttack(attacker, target, weapon)` is the attack
+authority, reached through `GridManager.Combat`. Its current sequence:
+
+1. Reject a dead target or an attacker already marked as having attacked.
+2. If a `TurnManager` is assigned, require Battle and the attacker's turn.
+3. Find the attacker's charge by weapon ID and require `IsReady`.
+4. Require the weapon's target domain to match the target or be Both.
+5. Measure Chebyshev distance across all attacker/target occupied-cell pairs
+   and require at least one pair within weapon range.
+6. Require at least one target occupied cell to be known in the attacker's fog.
+7. Require at least one in-range pair with clear terrain line of fire, using
+   `VisionResolver.TryGetFirstBlockingCell`.
+8. Offer ready defenses matching the target's current domain. Player A selects
+   one or passes; Player B currently passes automatically. A pending response
+   blocks further attacks and phase advancement.
+9. Roll and spend a selected defense first. Success avoids the weapon roll and
+   damage; Crash Dive submerges the target and locks its next Move.
+10. Spend the attack opportunity and finite ammo once. After a pass or failed
+    defense, roll the weapon, apply armor, and subtract health.
+9. If the target reaches zero health, clear its fog marks, remove its tile
+   occupancy, and remove it from its owner's live ship list.
+
+`ApplyArmor` computes
+`round(rawDamage * (1 - armor * 0.0015))`. A zero-damage miss stays zero;
+nonzero damage is clamped to at least one. `RequestAttack` returns a rejected,
+pending, or finalized status; `SubmitDefense` returns a structured outcome.
+`CanShipAttack` is a read-only alive/phase/turn/attack-flag query; it does
+not check weapon, target, range, fog, or line of fire. Defense profiles and
+their charge state and side effects are resolved by `CombatResolver`.
+
+## Mines and reconnaissance planes
+
+`GridManager.DeployMine` requires the selected ship to own a positive mine
+charge and be the acting player in Staging. It calculates one cell behind
+the stern and rejects out-of-bounds, impassable, ship-occupied, or
+already-mined destinations. Success adds a `MineTile` to
+`MatchState.mines`, consumes one charge, and starts its recharge countdown.
+After a confirmed or legacy ship move, `ResolveMinesFor` collects mines
+under the moved footprint, removes them, and applies their combined flat
+damage without armor or defense. On death it clears fog marks, occupancy,
+and live ownership. The current trigger loop does not filter mines by owner.
+`ShipInstance.TickRecharge` decrements the acting player's mine countdown
+at End and restores one charge at zero, up to its initial capacity. There is
+no plane sortie recharge path.
+
+`DeployPlane` requires Staging, ownership, a positive sortie charge, an
+in-bounds **passable** launch destination, and Chebyshev distance at most
+the profile's launch range from any carrier hull cell. It does not reject
+ship occupancy at that cell. The plane is stored in `MatchState.planes`,
+not `GridManager.tiles`; deployment consumes a sortie and recomputes
+passive fog. A plane deployed this Staging cannot move until a later
+Staging. `PreviewPlaneMove` stores a separate candidate after
+checking owner, phase, bounds, and distance from `positionAtTurnStart`;
+it does not check terrain, occupancy, or intermediate path.
+`ConfirmPlaneMove` updates the live position and refreshes fog; canceling
+discards the candidate. `UndeployPlane` removes
+only a plane deployed in the current Staging, refunds its launch ship's
+matching sortie charge up to capacity, and recomputes fog. At the owning
+player's End, fuel decreases by one and a plane at zero is removed.
+
+## Human controls in `TestShipController`
+
+The controller targets Player A's ship list. It polls `Input` each frame,
+and `Space` advances `TurnManager` even outside Player A's turn if this
+component is active. It returns from other action handling when it is not
+Player A's turn. The checks below describe the implemented input path,
+not general guarantees on direct service calls.
+
+| Context | Implemented input |
 | --- | --- |
-| Anchor | The world grid coordinate stored by a `ShipInstance`; footprint offsets are added to it. |
-| Footprint | Local list of `Vector2Int` offsets describing a ship's occupied cells. |
-| Occupied cell | A world grid coordinate returned by `GetOccupiedCells`. |
-| Domain | `Surface` or `SubSurface` runtime state; `Both` is used by definitions. |
-| Surface | Ship runtime domain visible to surface-compatible weapons/sensors. |
-| SubSurface | Submerged runtime domain visible to sub-surface-compatible weapons/sensors. |
-| Sensor | Vision type that produces `Marked` knowledge. |
-| Absolute | Vision type that produces `Identified` knowledge during passive recompute. |
-| Marked | Known enemy position/domain without full identity in the milestone model. |
-| Identified | Stronger fog state written by an absolute passive layer. |
-| Passive | Vision layer evaluated during `Search` without an active action. |
-| Active | Vision layer evaluated during `Search`; its marks last until `End`. |
-| Halo | Chebyshev-radius vision checked from the nearest source hull cell. |
-| Cone | Directional scan extending from the bow using `ConeSlope = 1`. |
-| FogGrid | One player's passive/active detected-cell state. |
-| VisionResolver | Stateless class that applies vision geometry and filtering rules. |
-| PhaseChanged | `TurnManager` event raised after each phase transition. |
-| `anchorAtTurnStart` | Movement-phase origin used to enforce the per-turn range budget. |
-| Bow | The occupied cell furthest from the anchor in the footprint-derived facing direction. |
+| Selection | Left-click a friendly ship's authoritative or relevant preview cell; Tab cycles Player A ships. During Staging, friendly planes can be clicked or reached by Tab after ships. |
+| Move | Arrows preview anchor movement; Q/E preview quarter-turn rotation; dragging from a selected ship's cell previews pointer movement. Escape/C clear **all** uncommitted provisional moves. D toggles an active Wolf between Surface and SubSurface. Space confirms provisional movement and, on success, advances. Enter does not commit movement. |
+| Staging ship | M requests stern mine deployment. P arms plane placement; next left-click requests deployment, using the selected carrier or the first available Player A carrier. Escape, C, or right-click cancels placement mode. |
+| Staging plane | A new plane becomes selected after placement but cannot move that turn. Arrows or a destination click call `PreviewPlaneMove` for older planes; C undeploys a newly launched plane or cancels an older plane's preview. Space commits owned plane moves and advances. |
+| Search | S or a click on the active ship opens a cone preview. Mouse hold/drag aims to a cardinal direction; Q/E rotates; Enter confirms; Escape/C cancels. Space confirms a pending preview, then advances. |
+| Battle | Keys 1, 2, 3 choose existing weapon slots. Clicking an occupied enemy tile requests an attack; clicking a friendly ship changes selection. On an incoming attack, number keys choose a defense, 0 passes, and Enter submits. |
 
----
+The controller's Battle click path reads `Tile.Occupant` directly, so
+`GridView` hiding an unknown enemy is only a visual constraint. The
+authoritative combat fog gate still rejects an unknown target.
 
-## 17. Quick Reference
+## AI
 
-### Class → responsibility
+`AIController` handles Player B `PhaseChanged` events and has no Update
+loop. At Move it builds `AITurnContext`, records/ages
+`AIEnemyMemory`, snapshots each living ship's start anchor, plans, and
+executes moves sequentially with `GridManager.MoveShip`. At Search it calls
+`AIActiveScanPlanner.RunActiveScans`. At Battle it refreshes memory without
+aging, selects attacks for living ships, and calls
+`GridManager.Combat.RequestAttack`. If Player A has an eligible defense,
+the remaining Player B attacks resume after its response. It has no Staging
+or End decision.
 
-```text
-GridManager       → board, occupancy, movement, attack resolution, phase/fog wiring
-Tile              → one coordinate and its occupant
-FootprintUtil     → rotate footprints and calculate world cells
-ShipInstance      → runtime ship state
-ShipFactory       → dispatch ship creation
-ShipData          → hardcoded Wolf/Athena/SwordFish definitions
-MatchState        → both players and aggregate ship access
-PlayerState       → one player's roster and live ships
-DeploymentService → initial fleet construction and placement
-TurnManager       → phase/player state and PhaseChanged event
-FogManager        → when each player's vision is evaluated
-FogGrid           → passive/active fog state for one player
-VisionResolver    → halo/cone geometry and detection filtering
-AIController      → prototype Player B movement/weapon choice
-TestShipController→ prototype Player A input
-```
+`AITurnContext` contains living friendly and enemy lists, Player B fog, and
+`KnownEnemies` (an enemy with at least one occupied cell known in that fog).
+`AIMovementPlanner` in `AImovementplanner1.cs` scores reachable,
+placeable anchors against known enemies, possible attacks, expected danger,
+health, and targets already claimed by another ship. It may flee when at or
+below 30% health; without an attack option it approaches a known enemy or
+the board center. `AIAttackPlanner` scores currently known targets and
+available weapons, including hypothetical line of fire and range.
+`AIScoring.ExpectedValue` calculates weapon expected damage. Final attack
+legality remains in `CombatResolver`.
 
-### Method → purpose
+`AIEnemyMemory` stores last sightings and rough heading for scan
+predictions. It is separate from fog and does not make a hidden target
+attackable. `AIActiveScanPlanner` in `Aiactivescanner.cs` scores four
+cardinal facings by predicted bearing and unknown fog coverage. It iterates
+ships in roster order and immediately confirms the first activation that
+succeeds; the grid's fleet scan limit rejects later attempts. It does not
+compare all ships to choose a global best scanner.
 
-```text
-GridManager.CanPlaceShip            → validate candidate footprint (includes one-tile exclusion zone)
-GridManager.CanAdvancePhase         → pure read: check whether the current phase is ready to advance
-GridManager.MoveShip                → validate and atomically move/rotate a ship (AI legacy path)
-GridManager.DeployMine              → deploy a mine behind the stern during Staging (SwordFish)
-GridManager.ActivateActiveScan      → begin player-controlled scan preview for a ship
-GridManager.RotateActiveScan        → rotate the active scan cone preview
-GridManager.ConfirmActiveScan       → resolve the active scan and write fog marks
-GridManager.CancelActiveScan        → discard scan preview with no fog change
-GridManager.Combat.ResolveAttack    → authoritative attack path (fog + LOS + d20)
-CombatResolver.HasClearLineOfFire   → test in-range cell pairs for terrain obstruction
-CombatResolver.IsTargetKnown        → apply the fog attack gate
-ShipInstance.GetOccupiedCells       → calculate current world footprint
-ShipInstance.InitializeCharges      → initialize health and profile charges
-VisionResolver.GetDetectedCells     → find enemy cells detected by one layer (with LOS)
-VisionResolver.TryGetFirstBlockingCell → supercover Bresenham LOS; returns first Impassable blocker
-VisionResolver.GetConeCells         → generate directional cone coordinates
-VisionResolver.GetBowAndFacing      → derive bow and facing from footprint
-FogManager.RecomputeAllPassive      → rebuild both passive fog views during Search
-FogManager.RunActiveSearch          → mark cells found by one ship's active scan layer
-FogManager.ClearAllActiveMarks      → clear temporary search results at End
-TurnManager.AdvancePhase            → advance phase and raise PhaseChanged
-```
+`AIScoring.ExpectedValue` sums each tier's damage times its inclusive
+roll-band width divided by 20. This is raw expected damage before armor or
+defense. `AIAttackPlanner` favors a predicted lethal shot and applies a
+soft penalty when another ship has already fired on a nonlethal target.
 
-### System → main entry point
+The AI context and memory receive live enemy `ShipInstance` references
+to establish which ships are currently known. The planner's target lists
+use `KnownEnemies`; this is fog-aware selection, but it is not a strict
+information-isolated AI API. Movement still executes through the legacy
+distance-based grid method.
 
-```text
-Grid             → GridManager.Awake / Start
-Deployment       → DeploymentService.DeployAll
-Turns            → TurnManager.AdvancePhase
-Passive fog      → GridManager.HandlePhaseChanged(Search)
-Active fog       → GridManager.ActivateActiveScan / ConfirmActiveScan (player-triggered)
-Combat           → GridManager.Combat.ResolveAttack
-Player input     → TestShipController.Update
-AI               → AIController.Update
-```
+## Rendering and debugging
 
-### Event → who raises it / who listens
+`GridView.OnDrawGizmos` draws terrain, starting zones, ships, provisional
+footprints, active cone cells, contacts, mines, and planes from grid/match
+state. Player A ships are cyan. In Play mode, enemy ship cells are red when
+Identified, orange contact markers when Marked, and hidden when Unknown.
+The serialized `revealAllInFog` toggle or Edit mode reveals all ship
+occupants. Own mines are yellow; enemy mines are otherwise hidden, while
+a Marked mine cell uses the generic contact marker. Own planes are green
+diamonds; enemy planes are magenta only when their cell is known or reveal
+mode is active. The view uses Player A's fog, not the currently active
+player's fog. `DrawDebugHalos` and `DrawMovementRanges` are absent.
+Console logs from deployment, vision, combat, mine, plane, and AI operations
+remain part of prototype verification.
 
-```text
-PhaseChanged → raised by TurnManager.AdvancePhase
-             → currently listened to by GridManager.HandlePhaseChanged
-```
+## File map
 
-### Data → where it is stored
+| Location | Main types and purpose |
+| --- | --- |
+| `Assets/Scripts/Grid` | `GridManager` (board and phase operations), `GridView` (read-only Gizmos), `TestShipController` (Player A input), `Tile`, `TerrainType`, `MapDefinition`, `FootprintUtil`, `GridPathfinder`, `MovementPathResult`, `ProvisionalMovementState`. |
+| `Assets/Scripts/Ships` | `ShipInstance` runtime state, `ShipType`, `ShipFactory`, `ShipData` card builders. |
+| `Assets/Scripts/Match` | `PlayerState`, `MatchState`, `DeploymentService`. |
+| `Assets/Scripts/Turns` | `TurnManager`, `Phase`, `PlayerId`. |
+| `Assets/Scripts/FogOfWar` | `FogState`, `FogGrid`, `FogManager`, `VisionResolver`, `VisionScanResult`, `ActiveScanPreviewState`. |
+| `Assets/Scripts/Combat` | `CombatResolver`, domain/vision/shape definitions, weapon/defense/roll/charge profiles, mine and plane profiles/runtime types. |
+| `Assets/Scripts/AI` | `AIController`, `AITurnContext`, `AIMovementPlanner`, `AIAttackPlanner`, `AIActiveScanPlanner`, `AIEnemyMemory`, `AIScoring`. Some filenames differ in case and spelling from their class names. |
 
-```text
-Board occupancy → GridManager.tiles
-Match ownership → MatchState.playerA/playerB
-Live fleets     → PlayerState.ships
-Ship state      → ShipInstance
-Card definitions→ ShipData-built WeaponProfile/DefenseProfile/VisionLayer lists
-Charges         → ShipInstance.weaponCharges/defenseCharges
-Player fog      → FogManager's two FogGrid instances
-```
+## Unverified runtime outcomes
+
+This guide is based on source, the sample scene/map serialization, and
+static inspection. A Unity Play mode session was not run for this audit.
+The following outcomes therefore need runtime confirmation:
+
+- Whether the sample scene's duplicate serialized `TurnManager` component
+  on the grid GameObject has any observable effect. The grid, AI, and input
+  references point to the separate `TurnManager` component.
+- Whether active scanning can ever leave a visible mine contact in a
+  nonstandard overlapping state; the ordinary mine reveal path described
+  above is not supported by the scan's detected-cell list.
+- The appearance of Gizmos in a specific Game or Scene view setup and the
+  full sequence of controller input interactions across phase changes.

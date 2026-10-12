@@ -48,6 +48,14 @@ public class ShipInstance
     public List<ChargeState> mineCharges = new List<ChargeState>();
     public List<ChargeState> planeCharges = new List<ChargeState>();
 
+    // --- Combat state ---
+    // Tracks whether this ship has already executed an attack during the current Battle phase.
+    // Each ship may only attack once per Battle phase. Reset when transitioning phases.
+    public bool hasAttackedThisPhase;
+    // Crash Dive locks movement and rotation during the owner's next Move phase.
+    public bool skipNextMove;
+    public bool movementLockedThisMove;
+
     // --- Grid helper ---
     public List<Vector2Int> GetOccupiedCells()
     {

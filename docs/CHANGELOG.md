@@ -8,6 +8,229 @@ update pass.
 
 ---
 
+## Defensive measures
+
+- Legal attacks now pause for an eligible Player A defense choice. The shared combat resolver validates choices, rolls and spends defenses, finalizes damage and ammo once, and emits a structured outcome. Player B currently passes automatically.
+- Successful Crash Dive submerges the target and blocks its next Move phase's movement and rotation. Player B attacks resume after each Player A response.
+- Added a keyboard defense prompt. Verified eligibility, outcomes, charge use, Move locking, and Player B attack continuation with 11 temporary EditMode tests, then removed the test artifacts.
+
+---
+
+## [Plane Staging Click Selection and Undeploy on Cancel]
+
+**Summary:**
+Added direct click-selection and undeploy functionality for reconnaissance planes in the Staging phase:
+- In `PlaneUnit.cs`:
+  - Added `ShipInstance launchedFrom`, `string profileId`, and `bool deployedThisTurn` fields to track the origin carrier and deployment lifecycle.
+- In `GridManager.cs`:
+  - `DeployPlane` passes `ship` and `planeProfile.id` to the `PlaneUnit` constructor and sets `deployedThisTurn = true`.
+  - `PreviewPlaneMove` enforces that planes cannot move on the turn they are placed (`if (plane.deployedThisTurn)` returns `false` and logs rejection); plane movement is only allowed starting in the next Staging phase.
+  - Added `UndeployPlane(PlaneUnit plane)`: verifies active Staging phase and turn ownership, ensures `plane.deployedThisTurn == true`, removes plane from `match.planes`, increments the launch ship's sortie `ChargeState.remaining` (capped at `maxCapacity`), and triggers `Fog.RecomputeAllPassive(match)`.
+  - In `HandlePhaseChanged`, cleared `deployedThisTurn = false` for the acting player's planes on entry to `Phase.Search`, ensuring planes cannot be undeployed in subsequent turns and unlocking movement for future Staging phases.
+- In `TestShipController.cs`:
+  - In `Update` during `Phase.Staging`, clicking a cell occupied by a friendly plane now activates and selects that plane (`isControllingPlane = true`, `currentPlaneIndex`).
+  - Added `KeyCode.C` handling during `planePlacementPending` to cancel plane placement mode.
+  - In `HandleStagingInput`, automatically activates newly deployed planes immediately upon deployment so they can be selected or undeployed right away.
+  - In `HandlePlaneMovementInput`:
+    - Pressing `KeyCode.C` on a plane deployed this turn calls `gridManager.UndeployPlane(plane)` to remove it and refund the sortie; on planes from prior turns, `C` reverts position to `positionAtTurnStart`.
+    - Left-clicking on friendly ships or other friendly planes does not move the active plane, allowing seamless unit selection switching.
+
+**Modified files:**
+- `Assets/Scripts/Combat/PlaneUnit.cs` — added `launchedFrom`, `profileId`, `deployedThisTurn`
+- `Assets/Scripts/Grid/GridManager.cs` — added `UndeployPlane` method and phase clearing in `HandlePhaseChanged`
+- `Assets/Scripts/Grid/TestShipController.cs` — click-selection for planes, immediate activation on deploy, and `C` undeploy/revert
+- `docs/DEVELOPER_GUIDE.md` — updated Staging phase description
+- `docs/AGENTS.md` — updated runtime flow
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Plane Movement Moved to Staging Phase]
+
+**Summary:**
+Configured reconnaissance planes to only move during the Staging phase instead of the Move phase:
+- In `PlaneUnit.cs`, updated the `positionAtTurnStart` comment to reflect movement range checks during the Staging phase.
+- In `GridManager.cs`:
+  - `PreviewPlaneMove` now enforces `Phase.Staging` (rejects attempts to move planes in any other phase) and checks player ownership.
+  - In `HandlePhaseChanged`, moved `plane.positionAtTurnStart` snapshotting from `Phase.Move` to `Phase.Staging`.
+- In `TestShipController.cs`:
+  - Space advance commits plane moves (`ConfirmPlaneMove`) when advancing from `Phase.Staging` rather than `Phase.Move`.
+  - Tab cycling switches between ships and planes only during `Phase.Staging`; in `Phase.Move` (and other phases), Tab only cycles ships.
+  - In `Update`, plane movement inputs (`HandlePlaneMovementInput`) are routed during `Phase.Staging` instead of `Phase.Move`.
+  - Clicking any friendly ship resets `isControllingPlane = false` to immediately return focus to ship control.
+- In `docs/DEVELOPER_GUIDE.md` & `docs/AGENTS.md`, updated the phase transition diagrams and descriptions.
+
+**Modified files:**
+- `Assets/Scripts/Combat/PlaneUnit.cs` — updated comment for Staging movement
+- `Assets/Scripts/Grid/GridManager.cs` — added phase gate in `PreviewPlaneMove` and moved snapshotting to `Phase.Staging`
+- `Assets/Scripts/Grid/TestShipController.cs` — routed plane selection, inputs, and confirmation to Staging phase
+- `docs/DEVELOPER_GUIDE.md` — updated phase transition diagram
+- `docs/AGENTS.md` — updated runtime flow
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [One Attack Per Ship Per Battle Phase Limit]
+
+**Summary:**
+Implemented a rule restricting each ship to at most one attack per Battle phase:
+- Added `hasAttackedThisPhase` bool to `ShipInstance` to track whether a ship has fired during the active Battle phase.
+- Updated `CombatResolver.ResolveAttack`:
+  - Rejects attacks if `attacker.hasAttackedThisPhase` is already true.
+  - Rejects attacks if not currently in `Phase.Battle` or if not the attacking player's turn (when `TurnManager` is present).
+  - Sets `attacker.hasAttackedThisPhase = true` when all validations pass and the weapon fires (`RollWeapon`, ammo deduction).
+  - Added public `CanShipAttack(ShipInstance ship)` helper to query ship attack eligibility.
+- Updated `GridManager`:
+  - Exposed `TurnManager` property.
+  - Added `ResetShipAttackStates()` to reset `hasAttackedThisPhase = false` across all ships.
+  - Hooked `ResetShipAttackStates()` into `HandlePhaseChanged` on entry into `Phase.Battle` and `Phase.End`.
+- Updated `TestShipController.HandleAttackInput`:
+  - Added guard rejecting attacks if the selected ship has already attacked this Battle phase, while preserving friendly-ship click selection.
+
+**Modified files:**
+- `Assets/Scripts/Ships/ShipInstance.cs` — added `hasAttackedThisPhase` field
+- `Assets/Scripts/Combat/CombatResolver.cs` — enforced one-attack limit, phase/turn gate, and added `CanShipAttack`
+- `Assets/Scripts/Grid/GridManager.cs` — exposed `TurnManager`, added `ResetShipAttackStates` and wired phase hooks
+- `Assets/Scripts/Grid/TestShipController.cs` — added pre-attack guard for `ship.hasAttackedThisPhase`
+- `docs/DEVELOPER_GUIDE.md` — updated `CombatResolver.ResolveAttack` validation order
+- `docs/AGENTS.md` — updated operating model notes
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Clear Marked Orange Contact on Ship Destruction]
+
+**Summary:**
+Configured automatic fog mark cleanup when a ship is destroyed in combat or from mine detonations:
+- When a ship's health reaches 0, its occupied cells are immediately removed from both passive and active fog dictionaries via `FogManager.ClearMarksForShip(target)`.
+- Eliminates lingering light orange sensor contact markers (`DrawSensorContact`) on tiles after the occupant ship has been sunk.
+- In `GridView.cs`, defensively added an occupant health check (`tile.Occupant.currentHealth <= 0`) to prevent any rendered artifacts on the death frame.
+
+**Modified files:**
+- `Assets/Scripts/FogOfWar/FogGrid.cs` — added `ClearCell(Vector2Int)` and `ClearCells(IEnumerable<Vector2Int>)`
+- `Assets/Scripts/FogOfWar/FogManager.cs` — added `ClearMarksForShip(ShipInstance)` and `ClearMarksForCells(IEnumerable<Vector2Int>)`
+- `Assets/Scripts/Combat/CombatResolver.cs` — called `gridManager.Fog?.ClearMarksForShip(target)` upon ship destruction
+- `Assets/Scripts/Grid/GridManager.cs` — called `Fog?.ClearMarksForShip(ship)` upon mine destruction in `ResolveMinesFor`
+- `Assets/Scripts/Grid/GridView.cs` — defensively skipped destroyed ship occupants in tile rendering loop
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Fix Enemy Ship Movement Flash in Fog]
+
+**Summary:**
+Identified and resolved the root cause of enemy ships flashing in the fog during their Move phase:
+- **Root Cause**: When the turn phase transitioned to `Phase.Move` for Player B (AI), `GridManager.HandlePhaseChanged` populated `provisionalMoves` with Player B's ships. In `GridView.DrawProvisionalShips()`, all provisional ships were unconditionally rendered with a red cube and white wireframe without checking owner or fog state. Once the Move phase ended or confirmed, `provisionalMoves` was cleared and the ships disappeared from view, creating a visual flash.
+- **Fix in `GridView.cs`**:
+  - `DrawProvisionalShips()` now skips any ship that does not belong to `PlayerId.PlayerA` unless `revealAllInFog` is active.
+  - `HasProvisionalPreview()` returns `false` for enemy ships unless `revealAllInFog` is active, ensuring enemy ships on tiles are solely rendered via the fog-gated main loop.
+- **Fix in `GridManager.cs`**:
+  - `HandlePhaseChanged` now only creates and confirms `provisionalMoves` when `turnManager.CurrentPlayer == PlayerId.PlayerA`. Player B (AI) moves authoritatively via `MoveShip` and does not use provisional drafts.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridView.cs` — filtered enemy ships in `HasProvisionalPreview` and `DrawProvisionalShips`
+- `Assets/Scripts/Grid/GridManager.cs` — gated provisional movement snapshot and confirmation to Player A
+- `docs/CHANGELOG.md` — recorded this bugfix
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Active Search Sonar Domain Updated to Both]
+
+**Summary:**
+Updated the target domain for `Active Search Sonar` across surface ships (`AthenaClass`, `CruiserClass`, `CarrierClass`) from `DomainType.SubSurface` to `DomainType.Both`:
+- Active search sonar scans now detect both `Surface` and `SubSurface` enemy vessels.
+- All sonar layers preserve their original `visionType` (`VisionType.Sensor`), ensuring active scans mark detected contacts (`FogState.Marked`) with the light orange indicator rather than identifying them.
+- `WolfClass` submarine and `SwordFishClass` already had `DomainType.Both` configured.
+
+**Modified files:**
+- `Assets/Scripts/Ships/ShipData.cs` — updated `Active Search Sonar` detects domain to `DomainType.Both` for `AthenaClass`, `CruiserClass`, and `CarrierClass`
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Fog of War Visuals: Absolute vs Sensor Vision & Inspector Toggle]
+
+**Summary:**
+Resolved the "Red Cube Fog Trap" by conditionally rendering enemy units and sensor contacts according to Player A's Fog of War knowledge (`FogState`):
+- **Absolute Vision (`Identified`)**: Draws all things that are inside absolute vision. Specifically draws the enemy ship cells inside absolute vision as solid red cubes (`Color.red`).
+- **Sensor Type Vision (`Marked`)**: Marks the detected tile with a light orange contact indicator (`sensorMarkedColor`) with a golden wireframe highlight to visually indicate that something is present while keeping the identity unknown. The red enemy ship cube is not drawn.
+- **Hidden / Fog (`Unknown`)**: Enemy ships, mines, and planes in unrevealed cells are not drawn at all, preventing players from clicking unknown targets.
+- **Inspector Toggle (`revealAllInFog`)**: Added a serialized boolean on `GridView` (with `sensorMarkedColor`) allowing developers to toggle fog culling off during development/debugging (and automatically enabled when outside Play mode).
+- **Mines & Planes**: Enemy mines and planes now respect fog visibility rules, only displaying when known or when `revealAllInFog` is active. Scanned enemy mines render via the light orange sensor contact marker.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridView.cs` — added `revealAllInFog`, `sensorMarkedColor`, `DrawSensorContact`, and updated `OnDrawGizmos`, `DrawMines`, and `DrawPlanes`
+- `docs/DEVELOPER_GUIDE.md` — documented visual differentiation between Identified, Marked, and Unknown states
+- `docs/AGENTS.md` — documented GridView fog rendering and dev toggle
+- `docs/CHANGELOG.md` — recorded this update
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Mouse Drag & Click Rotation for Active Scan]
+
+**Summary:**
+Added mouse drag and click location support for rotating/aiming the non-passive active scan cone in the Search phase:
+- While active scan preview is open, clicking or holding and dragging the mouse (left or right click) aims the cone in the nearest cardinal direction toward the cursor.
+- Clicking the active ship in Search phase when no scan is active opens the active scan preview.
+- Keyboard controls (`S` to activate, `Q`/`E` to rotate quarter-turns, `Enter`/`Space` to confirm, `Esc`/`C` to cancel) remain fully functional.
+
+**Modified files:**
+- `Assets/Scripts/FogOfWar/ActiveScanPreviewState.cs` — added `SetForward(Vector2Int)`
+- `Assets/Scripts/Grid/GridManager.cs` — added `SetActiveScanForward(Vector2Int)`
+- `Assets/Scripts/Grid/TestShipController.cs` — added mouse click/drag rotation and click-to-activate in `HandleActiveScanInput`
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Remove Passive Vision Halo Gizmo]
+
+**Summary:**
+Removed `DrawDebugHalos` from `GridView.OnDrawGizmos` and deleted the method, stopping the rendering of passive vision halo wireframe gizmos. Non-passive cone scan preview (`DrawDebugCones`) remains intact and active.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridView.cs` — removed `DrawDebugHalos()` call and method; preserved `DrawDebugCones()`
+
+**Debt introduced:**
+- None.
+
+---
+
+## [Remove Ship Movement Range Gizmo]
+
+**Summary:**
+Removed `DrawMovementRanges` from `GridView.OnDrawGizmos`, which previously drew shaded cube and wireframe gizmos showing reachable movement anchors for provisional ship states.
+
+**Modified files:**
+- `Assets/Scripts/Grid/GridView.cs` — removed `DrawMovementRanges()` call and method
+
+**Debt introduced:**
+- None.
+
+---
+
 ## [Click-to-Select Active Ship]
 
 **Summary:**

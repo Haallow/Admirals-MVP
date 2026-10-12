@@ -25,9 +25,27 @@ public class TestShipController : MonoBehaviour
     private bool planePlacementPending = false;
     private bool isControllingPlane = false;
     private int currentPlaneIndex = 0;
+    private int deploymentSlot;
+    private bool draggingDeployment;
+    private Vector2Int deploymentDragOffset;
+    private Vector2Int lastDeploymentDragCell;
+    private int selectedDefenseNumber;
 
     private void Update()
     {
+        if (gridManager == null || turnManager == null || gridManager.Match == null) return;
+        if (gridManager.Match.Result != null) return;
+        if (gridManager.Deployment == null || !gridManager.Deployment.IsComplete)
+        {
+            HandleDeploymentInput();
+            return;
+        }
+        if (gridManager.Combat.HasPendingDefense)
+        {
+            HandleDefenseInput();
+            return;
+        }
+
         if (Input.GetKeyDown(KeyCode.Space))
         {
             if (turnManager.CurrentPhase == Phase.Move)
@@ -37,14 +55,18 @@ public class TestShipController : MonoBehaviour
                     Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
                     return;
                 }
+                if (gridManager.Match.Result != null) return;
+            }
 
+            if (turnManager.CurrentPhase == Phase.Staging)
+            {
                 if (gridManager.Match != null)
                 {
                     foreach (PlaneUnit p in gridManager.Match.planes)
                     {
                         if (p.owner == turnManager.CurrentPlayer)
                         {
-                            gridManager.ConfirmPlaneMove(p);
+                            if (!gridManager.ConfirmPlaneMove(p)) return;
                         }
                     }
                 }
@@ -82,73 +104,100 @@ public class TestShipController : MonoBehaviour
         //         provisionally moved away — this lets un-dragged ships be
         //         selected at their original tile in Move phase while still
         //         ignoring the vacated anchor cells of already-dragged ships.
-        if (Input.GetMouseButtonDown(0) && Camera.main != null)
+        if (Input.GetMouseButtonDown(0) && Camera.main != null && !planePlacementPending)
         {
             Vector2Int clickedCell = GetMouseGridCell();
-            ShipInstance clickedShip = null;
 
-            // Pass 1: provisional preview cells (always checked first).
-            foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+            // In Staging phase: planes are clickable to become active.
+            bool planeSelected = false;
+            if (turnManager.CurrentPhase == Phase.Staging && gridManager.Match != null)
             {
-                if (state.Ship.owner == PlayerId.PlayerA &&
-                    state.GetPreviewCells().Contains(clickedCell))
+                int pIndex = 0;
+                foreach (PlaneUnit p in gridManager.Match.planes)
                 {
-                    clickedShip = state.Ship;
-                    break;
+                    if (p.owner == PlayerId.PlayerA)
+                    {
+                        if (gridManager.GetPlanePreviewPosition(p) == clickedCell)
+                        {
+                            isControllingPlane = true;
+                            currentPlaneIndex = pIndex;
+                            isDraggingMovement = false;
+                            planeSelected = true;
+                            Debug.Log($"[Click] Switched to plane {currentPlaneIndex} at {p.position}");
+                            break;
+                        }
+                        pIndex++;
+                    }
                 }
             }
 
-            // Pass 2: tile occupancy fallback.
-            // In Move phase only accept the occupant if it has no provisional
-            // state that already moved it away from this cell, so that vacated
-            // anchor cells of dragged ships cannot trigger a selection.
-            if (clickedShip == null)
+            if (!planeSelected)
             {
-                Tile clickedTile = gridManager.GetTile(clickedCell);
-                if (clickedTile?.Occupant != null &&
-                    clickedTile.Occupant.owner == PlayerId.PlayerA)
+                ShipInstance clickedShip = null;
+
+                // Pass 1: provisional preview cells (always checked first).
+                foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
                 {
-                    ShipInstance candidate = clickedTile.Occupant;
-                    bool movedAway = false;
-                    if (turnManager.CurrentPhase == Phase.Move)
+                    if (state.Ship.owner == PlayerId.PlayerA &&
+                        state.GetPreviewCells().Contains(clickedCell))
                     {
-                        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
+                        clickedShip = state.Ship;
+                        break;
+                    }
+                }
+
+                // Pass 2: tile occupancy fallback.
+                // In Move phase only accept the occupant if it has no provisional
+                // state that already moved it away from this cell, so that vacated
+                // anchor cells of dragged ships cannot trigger a selection.
+                if (clickedShip == null)
+                {
+                    Tile clickedTile = gridManager.GetTile(clickedCell);
+                    if (clickedTile?.Occupant != null &&
+                        clickedTile.Occupant.owner == PlayerId.PlayerA)
+                    {
+                        ShipInstance candidate = clickedTile.Occupant;
+                        bool movedAway = false;
+                        if (turnManager.CurrentPhase == Phase.Move)
                         {
-                            if (state.Ship == candidate &&
-                                !state.GetPreviewCells().Contains(clickedCell))
+                            foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
                             {
-                                movedAway = true;
-                                break;
+                                if (state.Ship == candidate &&
+                                    !state.GetPreviewCells().Contains(clickedCell))
+                                {
+                                    movedAway = true;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    if (!movedAway)
-                    {
-                        clickedShip = candidate;
+                        if (!movedAway)
+                        {
+                            clickedShip = candidate;
+                        }
                     }
                 }
-            }
 
-            if (clickedShip != null)
-            {
-                int foundIndex = myShips.IndexOf(clickedShip);
-                if (foundIndex >= 0 && foundIndex != currentShipIndex)
+                if (clickedShip != null)
                 {
-                    currentShipIndex = foundIndex;
-                    selectedWeaponIndex = 0;
-                    isControllingPlane = false;
-                    // Cancel any in-progress drag so HandlePointerMovement cannot
-                    // treat this selection click as a drag-start on the new ship.
-                    isDraggingMovement = false;
-                    Debug.Log($"[Click] Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                    int foundIndex = myShips.IndexOf(clickedShip);
+                    if (foundIndex >= 0)
+                    {
+                        currentShipIndex = foundIndex;
+                        selectedWeaponIndex = 0;
+                        isControllingPlane = false;
+                        // Cancel any in-progress drag so HandlePointerMovement cannot
+                        // treat this selection click as a drag-start on the new ship.
+                        isDraggingMovement = false;
+                        Debug.Log($"[Click] Switched to ship {currentShipIndex}: {myShips[currentShipIndex].shipType}");
+                    }
                 }
             }
         }
 
         if (Input.GetKeyDown(KeyCode.Tab))
         {
-            // During Move phase, Tab cycles through ships then planes.
-            if (turnManager.CurrentPhase == Phase.Move)
+            // During Staging phase, Tab cycles through ships then planes.
+            if (turnManager.CurrentPhase == Phase.Staging)
             {
                 // Count living planes owned by PlayerA.
                 int planeCount = 0;
@@ -207,7 +256,7 @@ public class TestShipController : MonoBehaviour
             }
             else
             {
-                // Non-Move phases: standard ship cycling only.
+                // Non-Staging phases: standard ship cycling only.
                 currentShipIndex = (currentShipIndex + 1) % myShips.Count;
                 selectedWeaponIndex = 0;
                 isControllingPlane = false;
@@ -244,24 +293,14 @@ public class TestShipController : MonoBehaviour
                 currentPlaneIndex = 0;
             }
 
-            if (isControllingPlane)
+            // Domain toggle: submarine (WolfClass) only, only during Move phase when active.
+            if (ship.shipType == ShipType.WolfClass && Input.GetKeyDown(KeyCode.D))
             {
-                HandlePlaneMovementInput();
-            }
-            else
-            {
-                // Domain toggle: submarine (WolfClass) only, only during Move phase when active.
-                if (ship.shipType == ShipType.WolfClass && Input.GetKeyDown(KeyCode.D))
-                {
-                    ship.currentDomain = ship.currentDomain == DomainType.Surface
-                        ? DomainType.SubSurface
-                        : DomainType.Surface;
-
+                if (gridManager.TryToggleWolfDomain(ship))
                     Debug.Log($"--- Domain toggled to: {ship.currentDomain} ---");
-                }
-
-                HandleMoveInput(ship);
             }
+
+            HandleMoveInput(ship);
         }
         else if (turnManager.CurrentPhase == Phase.Battle)
         {
@@ -274,17 +313,167 @@ public class TestShipController : MonoBehaviour
         }
         else if (turnManager.CurrentPhase == Phase.Staging)
         {
-            HandleStagingInput(ship);
+            if (lastPhaseSeen != Phase.Staging)
+            {
+                isControllingPlane = false;
+                currentPlaneIndex = 0;
+                planePlacementPending = false;
+            }
+
+            if (isControllingPlane)
+            {
+                HandlePlaneMovementInput();
+            }
+            else
+            {
+                HandleStagingInput(ship);
+            }
         }
 
         lastPhaseSeen = turnManager.CurrentPhase;
     }
 
+    private void HandleDeploymentInput()
+    {
+        DeploymentService deployment = gridManager.Deployment;
+        if (deployment == null || !deployment.IsValid || Camera.main == null) return;
+        if (deployment.IsConfirmed(PlayerId.PlayerA)) return;
+
+        int count = gridManager.Match.playerA.fleetRoster.Count;
+        if (count == 0) return;
+        deploymentSlot = Mathf.Clamp(deploymentSlot, 0, count - 1);
+        string zoneId = deployment.GetAssignedZone(PlayerId.PlayerA);
+
+        if (Input.GetKeyDown(KeyCode.Tab)) deploymentSlot = (deploymentSlot + 1) % count;
+        if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.C))
+            draggingDeployment = false;
+
+        if (Input.GetKeyDown(KeyCode.Q) || Input.GetKeyDown(KeyCode.E))
+        {
+            if (deployment.TryGetDraft(PlayerId.PlayerA, PlayerId.PlayerA, deploymentSlot, out DeploymentDraft draft))
+            {
+                int delta = Input.GetKeyDown(KeyCode.Q) ? -90 : 90;
+                int rotation = (draft.RotationDegrees + delta + 360) % 360;
+                if (!deployment.TryPlace(PlayerId.PlayerA, zoneId, deploymentSlot, draft.Anchor, rotation))
+                    Debug.Log("Deployment rotation rejected.");
+            }
+        }
+
+        // Keep the right screen panel's clicks out of board placement.
+        if (Input.GetMouseButtonDown(0) && Input.mousePosition.x < Screen.width - 230)
+        {
+            Vector2Int cell = GetMouseGridCell();
+            foreach (DeploymentDraft draft in deployment.GetVisibleDrafts(PlayerId.PlayerA, PlayerId.PlayerA))
+            foreach (Vector2Int draftCell in draft.Cells)
+            {
+                if (draftCell != cell) continue;
+                deploymentSlot = draft.RosterSlot;
+                draggingDeployment = true;
+                deploymentDragOffset = draft.Anchor - cell;
+                lastDeploymentDragCell = cell;
+                return;
+            }
+
+            int rotation = deployment.TryGetDraft(PlayerId.PlayerA, PlayerId.PlayerA,
+                deploymentSlot, out DeploymentDraft selected) ? selected.RotationDegrees : 0;
+            if (!deployment.TryPlace(PlayerId.PlayerA, zoneId, deploymentSlot, cell, rotation))
+                Debug.Log("Deployment placement rejected.");
+        }
+
+        if (draggingDeployment && Input.GetMouseButton(0))
+        {
+            Vector2Int cell = GetMouseGridCell();
+            if (cell != lastDeploymentDragCell)
+            {
+                lastDeploymentDragCell = cell;
+                if (deployment.TryGetDraft(PlayerId.PlayerA, PlayerId.PlayerA, deploymentSlot, out DeploymentDraft draft) &&
+                    !deployment.TryPlace(PlayerId.PlayerA, zoneId, deploymentSlot,
+                        cell + deploymentDragOffset, draft.RotationDegrees))
+                    Debug.Log("Deployment drag rejected.");
+            }
+        }
+        if (Input.GetMouseButtonUp(0)) draggingDeployment = false;
+    }
+
+    private void OnGUI()
+    {
+        if (gridManager != null && gridManager.Combat != null && gridManager.Combat.HasPendingDefense)
+        {
+            PendingDefenseView pending = gridManager.Combat.PendingDefense;
+            if (pending.Defender == PlayerId.PlayerA)
+            {
+                GUILayout.BeginArea(new Rect(Screen.width - 250, 8, 242, 230), GUI.skin.box);
+                GUILayout.Label($"Incoming attack on {pending.Target.shipType}");
+                for (int i = 0; i < pending.EligibleDefenseIds.Count; i++)
+                    GUILayout.Label($"{i + 1}: {pending.EligibleDefenseIds[i]}");
+                GUILayout.Label("0: Pass");
+                string selectedDefense = selectedDefenseNumber > 0 && selectedDefenseNumber <= pending.EligibleDefenseIds.Count
+                    ? pending.EligibleDefenseIds[selectedDefenseNumber - 1] : "Pass";
+                GUILayout.Label($"Selected: {selectedDefense}");
+                GUILayout.Label("Press Enter to confirm");
+                GUILayout.EndArea();
+            }
+            return;
+        }
+
+        if (gridManager == null || gridManager.Match == null || gridManager.Deployment == null ||
+            gridManager.Deployment.IsComplete) return;
+
+        GUILayout.BeginArea(new Rect(Screen.width - 223, 8, 215, 310), GUI.skin.box);
+        GUILayout.Label("Player A Deployment");
+        if (!gridManager.Deployment.IsValid)
+        {
+            GUILayout.Label("Map deployment zones are invalid.");
+        }
+        else
+        {
+            var roster = gridManager.Match.playerA.fleetRoster;
+            for (int slot = 0; slot < roster.Count; slot++)
+            {
+                bool placed = gridManager.Deployment.TryGetDraft(PlayerId.PlayerA, PlayerId.PlayerA, slot, out _);
+                if (GUILayout.Button($"{(slot == deploymentSlot ? "> " : "")}{roster[slot]} {(placed ? "Placed" : "Unplaced")}"))
+                    deploymentSlot = slot;
+            }
+            GUILayout.Label(gridManager.Deployment.IsConfirmed(PlayerId.PlayerB)
+                ? "Player B ready" : "Waiting for Player B");
+            GUILayout.Label("Click to place, drag to move, Q/E rotate.");
+            GUI.enabled = gridManager.Deployment.CanConfirm(PlayerId.PlayerA);
+            if (GUILayout.Button("Confirm Deployment"))
+                gridManager.ConfirmDeployment(PlayerId.PlayerA);
+            GUI.enabled = true;
+        }
+        GUILayout.EndArea();
+    }
+
+    private void HandleDefenseInput()
+    {
+        PendingDefenseView pending = gridManager.Combat.PendingDefense;
+        if (pending == null || pending.Defender != PlayerId.PlayerA) return;
+        if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.Keypad0)) selectedDefenseNumber = 0;
+        for (int i = 1; i <= pending.EligibleDefenseIds.Count && i <= 9; i++)
+        {
+            if (Input.GetKeyDown((KeyCode)((int)KeyCode.Alpha1 + i - 1)) ||
+                Input.GetKeyDown((KeyCode)((int)KeyCode.Keypad1 + i - 1)))
+                selectedDefenseNumber = i;
+        }
+        if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+        {
+            string defenseId = selectedDefenseNumber > 0 && selectedDefenseNumber <= pending.EligibleDefenseIds.Count
+                ? pending.EligibleDefenseIds[selectedDefenseNumber - 1] : null;
+            if (gridManager.Combat.SubmitDefense(PlayerId.PlayerA, defenseId, out AttackOutcome outcome))
+            {
+                Debug.Log(outcome.Avoided ? "Attack avoided." : $"Attack resolved: {outcome.Damage} damage.");
+                selectedDefenseNumber = 0;
+            }
+        }
+    }
+
     private void HandleMoveInput(ShipInstance ship)
     {
-        if (Input.GetKeyDown(KeyCode.C))
+        if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.C))
         {
             gridManager.CancelProvisionalMovement();
+            isDraggingMovement = false;
             Debug.Log("Provisional movement cancelled; ships reverted to their movement-phase positions.");
             return;
         }
@@ -402,11 +591,21 @@ public class TestShipController : MonoBehaviour
             return;
         }
 
-        // C cancels / reverts plane move to start of turn
+        // C cancels: if the plane was deployed this turn, undeploy it. Otherwise revert move.
         if (Input.GetKeyDown(KeyCode.C))
         {
-            plane.position = plane.positionAtTurnStart;
-            Debug.Log($"[PLANE] Plane reverted to turn start position: {plane.positionAtTurnStart}");
+            if (plane.deployedThisTurn)
+            {
+                if (gridManager.UndeployPlane(plane))
+                {
+                    isControllingPlane = false;
+                    currentPlaneIndex = 0;
+                    return;
+                }
+            }
+
+            gridManager.CancelPlaneMove(plane);
+            Debug.Log($"[PLANE] Plane move preview canceled; live position: {plane.position}");
             return;
         }
 
@@ -418,19 +617,53 @@ public class TestShipController : MonoBehaviour
 
         if (direction != Vector2Int.zero)
         {
-            Vector2Int candidate = plane.position + direction;
+            Vector2Int candidate = gridManager.GetPlanePreviewPosition(plane) + direction;
             gridManager.PreviewPlaneMove(plane, candidate);
         }
 
         if (Input.GetMouseButtonDown(0))
         {
             Vector2Int clickedCell = GetMouseGridCell();
-            gridManager.PreviewPlaneMove(plane, clickedCell);
+            if (clickedCell != gridManager.GetPlanePreviewPosition(plane))
+            {
+                // Only move if not clicking a friendly ship or another friendly plane (which are selection targets)
+                bool isFriendlyShip = false;
+                Tile clickedTile = gridManager.GetTile(clickedCell);
+                if (clickedTile?.Occupant != null && clickedTile.Occupant.owner == plane.owner)
+                {
+                    isFriendlyShip = true;
+                }
+
+                bool isOtherFriendlyPlane = false;
+                if (gridManager.Match != null)
+                {
+                    foreach (PlaneUnit other in gridManager.Match.planes)
+                    {
+                        if (other != plane && other.owner == plane.owner &&
+                            gridManager.GetPlanePreviewPosition(other) == clickedCell)
+                        {
+                            isOtherFriendlyPlane = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!isFriendlyShip && !isOtherFriendlyPlane)
+                {
+                    gridManager.PreviewPlaneMove(plane, clickedCell);
+                }
+            }
         }
     }
 
     private void HandleActiveScanInput(ShipInstance ship)
     {
+        // Cancel active scan preview if active ship changed
+        if (gridManager.ActiveScanPreview != null && gridManager.ActiveScanPreview.Ship != ship)
+        {
+            gridManager.CancelActiveScan();
+        }
+
         if (Input.GetKeyDown(KeyCode.S))
         {
             if (gridManager.ActivateActiveScan(ship))
@@ -440,6 +673,49 @@ public class TestShipController : MonoBehaviour
             else
             {
                 Debug.Log("Active scan activation rejected (fleet scan already used this phase, wrong phase, or no cone layer).");
+            }
+        }
+
+        // Mouse click or drag to rotate active scan direction
+        if (gridManager.ActiveScanPreview != null && Camera.main != null)
+        {
+            if (Input.GetMouseButton(0) || Input.GetMouseButton(1))
+            {
+                Vector2Int mouseCell = GetMouseGridCell();
+                Vector2Int origin = gridManager.ActiveScanPreview.Bow;
+                Vector2Int diff = mouseCell - origin;
+                if (diff == Vector2Int.zero)
+                {
+                    diff = mouseCell - ship.anchor;
+                }
+
+                if (diff != Vector2Int.zero)
+                {
+                    Vector2Int newForward;
+                    if (Mathf.Abs(diff.x) >= Mathf.Abs(diff.y))
+                    {
+                        newForward = diff.x > 0 ? Vector2Int.right : Vector2Int.left;
+                    }
+                    else
+                    {
+                        newForward = diff.y > 0 ? Vector2Int.up : Vector2Int.down;
+                    }
+
+                    gridManager.SetActiveScanForward(newForward);
+                }
+            }
+        }
+        else if (gridManager.ActiveScanPreview == null && Input.GetMouseButtonDown(0) && Camera.main != null)
+        {
+            // Clicking the active ship during Search phase activates the scan preview
+            Vector2Int clickedCell = GetMouseGridCell();
+            Tile clickedTile = gridManager.GetTile(clickedCell);
+            if (clickedTile?.Occupant == ship)
+            {
+                if (gridManager.ActivateActiveScan(ship))
+                {
+                    Debug.Log($"Active scan preview started for {ship.shipType}.");
+                }
             }
         }
 
@@ -488,7 +764,7 @@ public class TestShipController : MonoBehaviour
             Debug.Log("Plane placement mode: click a cell to deploy (or Esc to cancel).");
         }
 
-        if (planePlacementPending && (Input.GetKeyDown(KeyCode.Escape) || Input.GetMouseButtonDown(1)))
+        if (planePlacementPending && (Input.GetKeyDown(KeyCode.Escape) || Input.GetMouseButtonDown(1) || Input.GetKeyDown(KeyCode.C)))
         {
             planePlacementPending = false;
             Debug.Log("Plane placement mode cancelled.");
@@ -514,6 +790,26 @@ public class TestShipController : MonoBehaviour
             if (gridManager.DeployPlane(launchShip, cell))
             {
                 Debug.Log($"Plane deployed to {cell} from {launchShip.shipType}.");
+
+                // Immediately make the newly deployed plane active upon deploying
+                if (gridManager.Match != null)
+                {
+                    int pIndex = 0;
+                    foreach (PlaneUnit p in gridManager.Match.planes)
+                    {
+                        if (p.owner == PlayerId.PlayerA)
+                        {
+                            if (p.position == cell)
+                            {
+                                isControllingPlane = true;
+                                currentPlaneIndex = pIndex;
+                                Debug.Log($"[PLANE] Activated newly deployed plane {currentPlaneIndex} at {cell}. Movement locked until next Staging phase (C to undeploy).");
+                                break;
+                            }
+                            pIndex++;
+                        }
+                    }
+                }
             }
             // DeployMine / DeployPlane logs its own rejection reason on failure.
         }
@@ -598,6 +894,12 @@ public class TestShipController : MonoBehaviour
             return;
         }
 
+        // Each ship can only attack once per Battle phase.
+        if (ship.hasAttackedThisPhase)
+        {
+            Debug.Log($"Attack rejected: {ship.owner}'s {ship.shipType} has already attacked this Battle phase.");
+            return;
+        }
 
         // selectedWeaponIndex was already bounds-checked in HandleWeaponSelection,
         // but re-check here too in case the active ship was switched (Tab) after
@@ -609,7 +911,11 @@ public class TestShipController : MonoBehaviour
         }
 
         WeaponProfile weaponToUse = ship.weapons[selectedWeaponIndex];
-        bool hit = gridManager.Combat.ResolveAttack(ship, clickedTile.Occupant, weaponToUse);
-        Debug.Log(hit ? "Attack resolved." : "Attack rejected.");
+        AttackRequestStatus status = gridManager.Combat.RequestAttack(ship, clickedTile.Occupant, weaponToUse);
+        if (status == AttackRequestStatus.PendingDefense &&
+            gridManager.Combat.PendingDefense.Defender == PlayerId.PlayerB &&
+            gridManager.Combat.SubmitDefense(PlayerId.PlayerB, null, out _))
+            status = AttackRequestStatus.Finalized;
+        Debug.Log($"Attack {status}.");
     }
 }

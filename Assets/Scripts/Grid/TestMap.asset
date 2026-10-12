@@ -15,3 +15,16 @@ MonoBehaviour:
   width: 30
   height: 15
   terrainEntries: []
+  deploymentZones:
+  - id: west
+    regions:
+    - x: 0
+      y: 0
+      width: 5
+      height: 15
+  - id: east
+    regions:
+    - x: 25
+      y: 0
+      width: 5
+      height: 15

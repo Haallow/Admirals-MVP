@@ -28,9 +28,7 @@ public class VisionLayer
     public VisionType visionType;
     public bool isPassive;      // true = always on; false = consumes the Search phase action
 
-    // Special case for layers that are only meaningful while the ship is surfaced.
-    // e.g. Wolf Class "Default Absolute Vision" — present but irrelevant when submerged.
-    // Real enforcement deferred to the Fog of War milestone; stored here so the data is correct.
+    // Optional source-domain restriction for sensors authored to require the surface.
     public bool onlyWhileSurfaced;
 
     public VisionLayer(string id, ShapeType shape, int range, DomainType detects,

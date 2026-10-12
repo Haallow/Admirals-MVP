@@ -13,17 +13,23 @@ public class PlaneUnit
     public Vector2Int position;
     public int fuelRemaining;     // decrements each End phase; removed at 0
     public int movementRange;     // copied from PlaneProfile at deploy time
-    public Vector2Int positionAtTurnStart; // for movement range check in Move phase
+    public Vector2Int positionAtTurnStart; // for movement range check in Staging phase
     public VisionLayer visionLayer; // absolute halo, built at deploy time
+    public ShipInstance launchedFrom; // ship that deployed this plane (for sortie refund)
+    public string profileId;          // profile id of the plane
+    public bool deployedThisTurn;     // true if deployed during current Staging phase
 
     public PlaneUnit(PlayerId owner, Vector2Int position, int fuelTurns,
-        int movementRange, int visionRange)
+        int movementRange, int visionRange, ShipInstance launchedFrom = null, string profileId = null)
     {
         this.owner               = owner;
         this.position            = position;
         this.fuelRemaining       = fuelTurns;
         this.movementRange       = movementRange;
         this.positionAtTurnStart = position;
+        this.launchedFrom        = launchedFrom;
+        this.profileId           = profileId;
+        this.deployedThisTurn    = true;
 
         // Build the passive absolute halo layer at deploy time.
         this.visionLayer = new VisionLayer(

@@ -2,20 +2,28 @@ using System.Collections.Generic;
 using UnityEngine;
 
 // Extracted from GridManager. Pure visualization, reads GridManager's data,
-// never mutates it. Owns the visual-only settings (zone colors/width) since
+// never mutates it. Owns the visual-only zone colors since
 // nothing but drawing needs them.
 //
-// DrawDebugCones/DrawDebugHalos are no longer "debug" in the throwaway sense,
-// per the roadmap they're becoming the real toggleable fog/scan visualization.
-// Kept their original names for now; rename when the actual toggle UI lands.
+// DrawDebugCones is no longer "debug" in the throwaway sense,
+// per the roadmap it's becoming the real toggleable fog/scan visualization.
+// Kept its original name for now; rename when the actual toggle UI lands.
 public class GridView : MonoBehaviour
 {
     [SerializeField] private GridManager gridManager;
 
-    [Header("Starting Zones")]
-    [SerializeField] private int startingZoneWidth = 5;
+    [Header("Deployment Zones")]
     [SerializeField] private Color playerZoneColor = new Color(0f, 0.35f, 1f, 0.18f);
     [SerializeField] private Color enemyZoneColor = new Color(1f, 0.1f, 0.1f, 0.18f);
+
+    [Header("Fog of War Visuals (Temporary Prototype)")]
+    // TEMPORARY: Scene-view inspection toggle for development. In production, fog culling
+    // will be handled by a dedicated Fog of War camera/shader system rather than Gizmo filtering.
+    [Tooltip("If true, all enemy ships and objects are drawn regardless of Fog of War for development/debugging.")]
+    [SerializeField] private bool revealAllInFog = false;
+    // TEMPORARY: Placeholder color for sensor contacts until production UI radar blip / sonar ping art lands.
+    [Tooltip("Color used to mark a tile detected by Sensor vision (something is there, but unknown).")]
+    [SerializeField] private Color sensorMarkedColor = new Color(1f, 0.65f, 0.2f, 0.85f);
 
     private void OnDrawGizmos()
     {
@@ -23,7 +31,10 @@ public class GridView : MonoBehaviour
 
         // TEMPORARY: Scene-view visualization only; does not affect gameplay state.
         DrawStartingZones();
-        DrawMovementRanges();
+
+        // TEMPORARY: Dev bypass — shows all objects in Edit mode or when the reveal toggle is enabled.
+        bool showAll = revealAllInFog || !Application.isPlaying;
+        FogGrid playerAFog = gridManager.Fog?.GetFogGrid(PlayerId.PlayerA);
 
         foreach (var kvp in gridManager.AllTiles)
         {
@@ -33,57 +44,62 @@ public class GridView : MonoBehaviour
 
             DrawTerrain(tile, worldPos);
 
-            if (tile.Occupant == null) continue;
+            FogState fogState = playerAFog != null ? playerAFog.GetState(pos) : FogState.Unknown;
+
+            // TEMPORARY FOG VISUAL: Sensor vision contact marker (light orange). Visually tells the player
+            // that something is detected on this tile, but identity remains unknown.
+            // In final production, replace this Gizmo with a radar blip, sonar ping VFX, or contact icon.
+            if (fogState == FogState.Marked && (!showAll || tile.Occupant == null))
+            {
+                DrawSensorContact(worldPos);
+            }
+
+            if (tile.Occupant == null || tile.Occupant.currentHealth <= 0) continue;
             if (HasProvisionalPreview(tile.Occupant)) continue;
 
-            // TEMPORARY: Gizmo ship marker for visual verification only.
-            Gizmos.color = tile.Occupant.owner == PlayerId.PlayerA ? Color.cyan : Color.red;
-            Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.72f);
+            if (tile.Occupant.owner == PlayerId.PlayerA)
+            {
+                // Friendly ships are always drawn in cyan
+                Gizmos.color = Color.cyan;
+                Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.72f);
+            }
+            else
+            {
+                // TEMPORARY FOG VISUAL: Enemy ship rendering gated by Fog of War.
+                // In production, full 3D ship models will be shown/hidden via mesh renderers or shaders.
+                if (showAll)
+                {
+                    // Dev mode: all enemy ships drawn in red regardless of fog.
+                    Gizmos.color = Color.red;
+                    Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.72f);
+                }
+                else if (fogState == FogState.Identified)
+                {
+                    // Absolute vision: draws identified enemy ship cells in red.
+                    Gizmos.color = Color.red;
+                    Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.72f);
+                }
+                // If Marked: DrawSensorContact was already drawn above; the ship itself is NOT drawn.
+                // If Unknown: neither sensor contact nor ship cube is drawn (prevents "Red Cube Fog Trap").
+            }
         }
 
         // TEMPORARY: Preview-only rendering; authoritative ship placement remains unchanged.
+        DrawDeploymentDrafts();
         DrawProvisionalShips();
         DrawDebugCones();
-        DrawDebugHalos();
         DrawMines();
         DrawPlanes();
     }
 
-    private void DrawMovementRanges()
-    {
-        // TEMPORARY: Shows reachable anchors to verify Dijkstra behavior in the Scene view.
-        foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
-        {
-            HashSet<Vector2Int> reachable =
-                gridManager.CalculateReachablePreviewAnchors(state);
-            Color rangeColor = state.Ship.owner == PlayerId.PlayerA
-                ? new Color(0f, 0.8f, 1f, 0.18f)
-                : new Color(1f, 0.2f, 0.2f, 0.18f);
-
-            foreach (Vector2Int cell in reachable)
-            {
-                Vector3 worldPos = new Vector3(
-                    cell.x * gridManager.CellSize,
-                    cell.y * gridManager.CellSize,
-                    0f);
-                Gizmos.color = rangeColor;
-                Gizmos.DrawCube(
-                    worldPos,
-                    Vector3.one * gridManager.CellSize * 0.9f);
-                Gizmos.color = new Color(
-                    rangeColor.r,
-                    rangeColor.g,
-                    rangeColor.b,
-                    0.7f);
-                Gizmos.DrawWireCube(
-                    worldPos,
-                    Vector3.one * gridManager.CellSize * 0.92f);
-            }
-        }
-    }
-
     private bool HasProvisionalPreview(ShipInstance ship)
     {
+        bool showAll = revealAllInFog || !Application.isPlaying;
+        if (ship.owner != PlayerId.PlayerA && !showAll)
+        {
+            return false;
+        }
+
         foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
         {
             if (state.Ship == ship)
@@ -97,18 +113,24 @@ public class GridView : MonoBehaviour
 
     private void DrawProvisionalShips()
     {
+        bool showAll = revealAllInFog || !Application.isPlaying;
+
         // TEMPORARY: Visualizes provisional movement before confirmation; never moves the ship.
         foreach (ProvisionalMovementState state in gridManager.ProvisionalMoves)
         {
-            Gizmos.color = state.Ship.owner == PlayerId.PlayerA
+            // In normal gameplay, never draw provisional previews for enemy ships —
+            // prevents enemy ships from flashing in fog when they move.
+            if (state.Ship.owner != PlayerId.PlayerA && !showAll)
+            {
+                continue;
+            }
+
+            Color previewColor = state.Ship.owner == PlayerId.PlayerA
                 ? new Color(0f, 1f, 1f, 0.8f)
                 : new Color(1f, 0.25f, 0.25f, 0.8f);
 
             foreach (Vector2Int cell in state.GetPreviewCells())
             {
-                Color previewColor = state.Ship.owner == PlayerId.PlayerA
-                    ? new Color(0f, 1f, 1f, 0.8f)
-                    : new Color(1f, 0.25f, 0.25f, 0.8f);
                 Vector3 worldPos = new Vector3(
                     cell.x * gridManager.CellSize,
                     cell.y * gridManager.CellSize,
@@ -147,23 +169,29 @@ public class GridView : MonoBehaviour
 
     private void DrawStartingZones()
     {
-        // TEMPORARY: Starting-zone overlay is for board inspection only.
-        int zoneWidth = Mathf.Clamp(startingZoneWidth, 0, gridManager.width / 2);
-
-        for (int x = 0; x < gridManager.width; x++)
+        if (gridManager.Map == null) return;
+        foreach (MapDeploymentZone zone in gridManager.Map.DeploymentZones)
         {
-            bool isPlayerZone = x < zoneWidth;
-            bool isEnemyZone = x >= gridManager.width - zoneWidth;
-
-            if (!isPlayerZone && !isEnemyZone) continue;
-
-            Gizmos.color = isPlayerZone ? playerZoneColor : enemyZoneColor;
-
-            for (int y = 0; y < gridManager.height; y++)
+            string playerZone = gridManager.Deployment?.GetAssignedZone(PlayerId.PlayerA);
+            Gizmos.color = zone.id == playerZone ? playerZoneColor : enemyZoneColor;
+            foreach (RectInt region in zone.regions)
+            foreach (Vector2Int cell in region.allPositionsWithin)
             {
-                Vector3 worldPos = new Vector3(x * gridManager.CellSize, y * gridManager.CellSize, 0f);
+                Vector3 worldPos = new Vector3(cell.x * gridManager.CellSize, cell.y * gridManager.CellSize, 0f);
                 Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.98f);
             }
+        }
+    }
+
+    private void DrawDeploymentDrafts()
+    {
+        if (gridManager.Deployment == null || gridManager.Deployment.IsComplete) return;
+        Gizmos.color = Color.cyan;
+        foreach (DeploymentDraft draft in gridManager.Deployment.GetVisibleDrafts(PlayerId.PlayerA, PlayerId.PlayerA))
+        foreach (Vector2Int cell in draft.Cells)
+        {
+            Vector3 center = new Vector3(cell.x * gridManager.CellSize, cell.y * gridManager.CellSize, 0f);
+            Gizmos.DrawCube(center, Vector3.one * gridManager.CellSize * 0.72f);
         }
     }
 
@@ -191,80 +219,36 @@ public class GridView : MonoBehaviour
         }
     }
 
-    private void DrawDebugHalos()
+    // TEMPORARY FOG VISUAL: Prototype Gizmo marker for sensor contacts (light orange cube with wireframe).
+    // In production, replace this with a proper 2D/3D radar blip, sonar ping VFX, or audio cue.
+    private void DrawSensorContact(Vector3 worldPos)
     {
-        // TEMPORARY: Halo overlay is visualization only and does not calculate fog state.
-        // Uses the same hull-cell range and supercover LOS check as VisionResolver so
-        // the Gizmo matches the authoritative detection result.
-        // Clear cells: cyan wire. Terrain-blocked cells: dark red wire.
-        if (gridManager.Match == null) return;
-
-        Color clearColor   = new Color(0f,  0.8f, 1f,   1f);
-        Color blockedColor = new Color(0.6f, 0f,  0.05f, 0.7f);
-
-        foreach (var ship in gridManager.Match.AllShips())
-        {
-            foreach (var layer in ship.visionLayers)
-            {
-                if (!layer.isPassive || layer.shape != ShapeType.Halo) continue;
-
-                var sourceCells = ship.GetOccupiedCells();
-
-                for (int x = 0; x < gridManager.width; x++)
-                {
-                    for (int y = 0; y < gridManager.height; y++)
-                    {
-                        Vector2Int cell = new Vector2Int(x, y);
-
-                        // Range check: any hull cell within Chebyshev range qualifies,
-                        // matching VisionResolver.IsWithinHalo exactly.
-                        bool inRange = false;
-                        foreach (var src in sourceCells)
-                        {
-                            int dist = Mathf.Max(
-                                Mathf.Abs(cell.x - src.x),
-                                Mathf.Abs(cell.y - src.y));
-                            if (dist <= layer.range) { inRange = true; break; }
-                        }
-                        if (!inRange) continue;
-
-                        // LOS check: cell is clear when any hull source has an
-                        // unobstructed supercover Bresenham path to it.
-                        // Matches VisionResolver.IsVisibleFromAnySource.
-                        bool hasClears = false;
-                        foreach (var src in sourceCells)
-                        {
-                            if (!VisionResolver.TryGetFirstBlockingCell(
-                                    src, cell, gridManager, out _))
-                            {
-                                hasClears = true;
-                                break;
-                            }
-                        }
-
-                        Gizmos.color = hasClears ? clearColor : blockedColor;
-                        Gizmos.DrawWireCube(
-                            new Vector3(x * gridManager.CellSize, y * gridManager.CellSize, 0f),
-                            Vector3.one * gridManager.CellSize * 0.85f);
-                    }
-                }
-            }
-        }
+        // Light orange contact marker showing presence without revealing identity
+        Gizmos.color = sensorMarkedColor;
+        Gizmos.DrawCube(worldPos, Vector3.one * gridManager.CellSize * 0.72f);
+        Gizmos.color = new Color(1f, 0.85f, 0.35f, 1f);
+        Gizmos.DrawWireCube(worldPos, Vector3.one * gridManager.CellSize * 0.82f);
     }
 
     private void DrawMines()
     {
         // Draws all live mines from MatchState.
-        // Own mines: solid yellow X wireframe â€” the deployer always sees their mines.
-        // Enemy mines: drawn in a dimmer orange for prototyping visibility in the
-        // Scene view. In production the fog layer would hide them; the Gizmo shows
-        // both sides so developers can verify placement and detonation easily.
+        // Own mines: solid yellow X wireframe — the deployer always sees their mines.
+        // TEMPORARY FOG VISUAL: Enemy mines are hidden in fog unless revealAllInFog is enabled.
+        // When pinged by an active sonar scan, the mine's cell is Marked in FogGrid and
+        // rendered via DrawSensorContact. In production, this will use visibility shaders / UI layer.
         if (gridManager.Match == null) return;
 
+        bool showAll = revealAllInFog || !Application.isPlaying;
         float size = gridManager.CellSize * 0.5f;
 
         foreach (MineTile mine in gridManager.Match.mines)
         {
+            if (mine.owner != PlayerId.PlayerA && !showAll)
+            {
+                continue;
+            }
+
             Vector3 center = new Vector3(
                 mine.position.x * gridManager.CellSize,
                 mine.position.y * gridManager.CellSize,
@@ -285,17 +269,30 @@ public class GridView : MonoBehaviour
     private void DrawPlanes()
     {
         // Draws all live planes from MatchState as diamond wireframe markers.
-        // Distinct from the mine X marker â€” a diamond shape indicates airborne unit.
+        // Distinct from the mine X marker — a diamond shape indicates airborne unit.
         // Color by owner: green = PlayerA, magenta = PlayerB.
+        // TEMPORARY FOG VISUAL: Enemy planes stay hidden in fog unless revealAllInFog is enabled or detected.
         if (gridManager.Match == null) return;
 
+        bool showAll = revealAllInFog || !Application.isPlaying;
         float size = gridManager.CellSize * 0.4f;
+        FogGrid playerAFog = gridManager.Fog?.GetFogGrid(PlayerId.PlayerA);
 
         foreach (PlaneUnit plane in gridManager.Match.planes)
         {
+            if (plane.owner != PlayerId.PlayerA && !showAll)
+            {
+                if (playerAFog == null || !playerAFog.IsKnown(plane.position))
+                {
+                    continue;
+                }
+            }
+
+            Vector2Int displayPosition = plane.owner == PlayerId.PlayerA
+                ? gridManager.GetPlanePreviewPosition(plane) : plane.position;
             Vector3 center = new Vector3(
-                plane.position.x * gridManager.CellSize,
-                plane.position.y * gridManager.CellSize,
+                displayPosition.x * gridManager.CellSize,
+                displayPosition.y * gridManager.CellSize,
                 0f);
 
             // Color by owner.

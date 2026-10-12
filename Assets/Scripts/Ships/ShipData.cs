@@ -114,22 +114,21 @@ public static class ShipData
                 isPassive: true
             ),
 
-            // Default Absolute Vision - close-range identification while surfaced.
+            // Default Absolute Vision - close-range identification in either domain.
             new VisionLayer(
                 id: "Default Absolute Vision",
                 shape: ShapeType.Halo,
                 range: 4,
                 detects: DomainType.Both,
                 visionType: VisionType.Absolute,
-                isPassive: true,
-                onlyWhileSurfaced: true
+                isPassive: true
             ),
 
             // Active Search Sonar - longer-range Search phase scan.
             new VisionLayer(
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
-                range: 4,
+                range: 8,
                 detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
@@ -235,7 +234,7 @@ public static class ShipData
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
                 range: 2,
-                detects: DomainType.SubSurface,
+                detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
             )
@@ -327,10 +326,10 @@ public static class ShipData
         ship.visionLayers = new List<VisionLayer>
         {
             new VisionLayer(
-                id: "Passive Radar & Sonar Array",
+                id: "Passive Radar",
                 shape: ShapeType.Halo,
                 range: 2,
-                detects: DomainType.Both,
+                detects: DomainType.Surface,
                 visionType: VisionType.Absolute,
                 isPassive: true
             ),
@@ -339,7 +338,7 @@ public static class ShipData
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
                 range: 5,
-                detects: DomainType.SubSurface,
+                detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
             )
@@ -378,6 +377,42 @@ public static class ShipData
         // --- Weapons ---
         ship.weapons = new List<WeaponProfile>
         {
+            new WeaponProfile(
+                id: "Deck Gun",
+                ammo: null,
+                weaponRange: 6,
+                targetDomain: DomainType.Surface,
+                rollTiers: new List<RollTier>
+                {
+                    new RollTier(1, 10, "Miss", 0),
+                    new RollTier(11, 20, "Direct Hit", 300),
+                }
+            ),
+
+            new WeaponProfile(
+                id: "Anti-Ship Missile",
+                ammo: 2,
+                weaponRange: 8,
+                targetDomain: DomainType.Surface,
+                rollTiers: new List<RollTier>
+                {
+                    new RollTier(1, 3, "Miss", 0),
+                    new RollTier(4, 17, "Direct Hit", 500),
+                    new RollTier(18, 20, "Catastrophic Hit", 750)
+                }
+            ),
+
+            new WeaponProfile(
+                id: "Anti-Submarine Rocket",
+                ammo: 2,
+                weaponRange: 8,
+                targetDomain: DomainType.SubSurface,
+                rollTiers: new List<RollTier>
+                {
+                    new RollTier(1, 5, "Miss", 0),
+                    new RollTier(6, 20, "Direct Hit", 600)
+                }
+            )
         };
 
         ship.defenses = new List<DefenseProfile>
@@ -420,7 +455,7 @@ public static class ShipData
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
                 range: 5,
-                detects: DomainType.SubSurface,
+                detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
             )
@@ -513,7 +548,7 @@ public static class ShipData
                 id: "Active Search Sonar",
                 shape: ShapeType.Cone,
                 range: 2,
-                detects: DomainType.SubSurface,
+                detects: DomainType.Both,
                 visionType: VisionType.Sensor,
                 isPassive: false
             )

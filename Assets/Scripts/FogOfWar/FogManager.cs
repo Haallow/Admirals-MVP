@@ -77,6 +77,19 @@ public class FogManager
         playerBFog.ClearActiveMarks();
     }
 
+    public void ClearMarksForCells(IEnumerable<Vector2Int> cells)
+    {
+        if (cells == null) return;
+        playerAFog.ClearCells(cells);
+        playerBFog.ClearCells(cells);
+    }
+
+    public void ClearMarksForShip(ShipInstance ship)
+    {
+        if (ship == null) return;
+        ClearMarksForCells(ship.GetOccupiedCells());
+    }
+
     private void RecomputePassive(PlayerId owner, MatchState match)
     {
         FogGrid fog = GetFogGrid(owner);

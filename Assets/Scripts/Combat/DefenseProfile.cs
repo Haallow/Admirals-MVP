@@ -11,14 +11,14 @@ public class DefenseProfile
     // Null means infinite uses (e.g. Crash Dive and Deep Dive on the Wolf Class).
     public int? uses;
 
-    // Which incoming weapon domain this defense can counter.
+    // The defender's current domain in which this defense is available.
     public DomainType validAgainst;
 
     // Saving throw roll table. Only outcomeLabel matters here; damage field is unused (left 0).
     public List<RollTier> savingThrowTiers;
 
     // String id for a side-effect triggered on success, e.g. "BecomeSubSurfaceAndSkipNextMove".
-    // Null if there's no side effect. Logic that reads this id doesn't exist yet — Milestone 5+.
+    // Null if there's no side effect. CombatResolver applies known effects on success.
     public string sideEffectId;
 
     public DefenseProfile(string id, int? uses, DomainType validAgainst,

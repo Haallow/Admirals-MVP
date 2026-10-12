@@ -11,12 +11,16 @@ public class GridManager : MonoBehaviour
     [SerializeField] public int height = 15;
     [SerializeField] private float cellSize = 1f;
     [SerializeField] private MapDefinition mapDefinition;
+    [SerializeField] private string playerADeploymentZoneId = "west";
+    [SerializeField] private string playerBDeploymentZoneId = "east";
 
     [SerializeField] private TurnManager turnManager;
 
     private Dictionary<Vector2Int, Tile> tiles = new Dictionary<Vector2Int, Tile>();
     private Dictionary<ShipInstance, ProvisionalMovementState> provisionalMoves =
         new Dictionary<ShipInstance, ProvisionalMovementState>();
+    private readonly Dictionary<PlaneUnit, Vector2Int> planeMovePreviews =
+        new Dictionary<PlaneUnit, Vector2Int>();
     private ActiveScanPreviewState activeScanPreview;
     // Fleet active scan limit: at most one confirmed active scan per player per Search phase.
     private bool fleetScannedThisPhase = false;
@@ -34,6 +38,9 @@ public class GridManager : MonoBehaviour
     public FogManager Fog { get; private set; }
     public CombatResolver Combat { get; private set; }
     public ActiveScanPreviewState ActiveScanPreview => activeScanPreview;
+    public TurnManager TurnManager => turnManager;
+    public DeploymentService Deployment { get; private set; }
+    public MapDefinition Map => mapDefinition;
 
     private void Awake()
     {
@@ -55,12 +62,130 @@ public class GridManager : MonoBehaviour
         var playerA = new PlayerState(PlayerId.PlayerA, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass, ShipType.SwordFishClass, ShipType.CarrierClass, ShipType.CruiserClass});
         var playerB = new PlayerState(PlayerId.PlayerB, new List<ShipType> { ShipType.WolfClass, ShipType.AthenaClass });
         match = new MatchState(playerA, playerB);
-        DeploymentService.DeployAll(match, this);
-
         if (turnManager != null)
         {
+            turnManager.PhaseAdvanceRequested += CanLeavePhase;
             turnManager.PhaseChanged += HandlePhaseChanged;
         }
+
+        Deployment = new DeploymentService(match, this, mapDefinition,
+            playerADeploymentZoneId, playerBDeploymentZoneId);
+        if (Deployment.IsValid && !Deployment.DraftPlayerB())
+            Debug.LogError("Player B's deterministic deployment could not place its full roster.");
+    }
+
+    public bool ConfirmDeployment(PlayerId player)
+    {
+        if (match?.Result != null || Deployment == null || !Deployment.Confirm(player)) return false;
+        if (Deployment.IsComplete)
+        {
+            RefreshPassiveVision();
+            turnManager?.StartMatch();
+        }
+        return true;
+    }
+
+    public void RefreshPassiveVision()
+    {
+        if (match != null && Fog != null)
+            Fog.RecomputeAllPassive(match);
+    }
+
+    // Combat calls this after all damage and death cleanup, before notifying AI listeners.
+    internal void RecordFinalizedAttack(AttackOutcome outcome)
+    {
+        if (match == null || outcome == null || match.Result != null) return;
+        match.BeginTurn(outcome.Attacker.owner);
+        TurnSummary summary = match.CurrentTurnSummary;
+        summary.Attacks++;
+        if (outcome.Avoided)
+            summary.DefensesAvoided++;
+        else if (outcome.Damage > 0)
+            summary.Hits++;
+        else
+            summary.Misses++;
+        if (outcome.DefenseId != null) summary.DefensesChosen++;
+        summary.CombatDamageDealt += outcome.Damage;
+        if (outcome.Target.currentHealth <= 0) summary.EnemyShipsSunk++;
+        EvaluateMatchResult();
+    }
+
+    private void EvaluateMatchResult()
+    {
+        if (match == null || match.Result != null || Deployment == null || !Deployment.IsComplete)
+            return;
+        bool aLost = match.playerA.ships.Count == 0;
+        bool bLost = match.playerB.ships.Count == 0;
+        if (!aLost && !bLost) return;
+
+        match.SetResult(aLost == bLost ? (PlayerId?)null : aLost ? PlayerId.PlayerB : PlayerId.PlayerA);
+        FinishTurn(true);
+        Debug.Log(match.Result.IsDraw ? "Match ended in a draw: both fleets were lost."
+            : $"Match over: {match.Result.Winner.Value} wins; opposing fleet eliminated.");
+    }
+
+    private void FinishTurn(bool partial)
+    {
+        TurnSummary summary = match?.CompleteTurn(partial);
+        if (summary != null) Debug.Log($"[TURN SUMMARY] {summary}");
+    }
+
+    public bool TryToggleWolfDomain(ShipInstance ship)
+    {
+        if (ship == null || match == null || match.Result != null || turnManager == null ||
+            ship.shipType != ShipType.WolfClass || ship.currentHealth <= 0 ||
+            !match.GetPlayer(ship.owner).ships.Contains(ship) ||
+            turnManager.CurrentPhase != Phase.Move || turnManager.CurrentPlayer != ship.owner)
+            return false;
+
+        SetShipDomain(ship, ship.currentDomain == DomainType.Surface
+            ? DomainType.SubSurface : DomainType.Surface);
+        return true;
+    }
+
+    internal void SetShipDomain(ShipInstance ship, DomainType domain)
+    {
+        if (match?.Result != null || ship == null || ship.currentDomain == domain) return;
+        ship.currentDomain = domain;
+        RefreshPassiveVision();
+    }
+
+    private void OnDestroy()
+    {
+        if (turnManager != null)
+        {
+            turnManager.PhaseAdvanceRequested -= CanLeavePhase;
+            turnManager.PhaseChanged -= HandlePhaseChanged;
+        }
+    }
+
+    private bool CanLeavePhase(Phase currentPhase)
+    {
+        if (match?.Result != null) return false;
+        if (Combat != null && Combat.HasPendingDefense)
+        {
+            Debug.LogWarning("Cannot advance phases while a defense response is pending.");
+            return false;
+        }
+
+        if (Deployment == null || !Deployment.IsComplete)
+        {
+            Debug.LogWarning("Cannot advance phases before both formations are confirmed.");
+            return false;
+        }
+
+        if (currentPhase != Phase.Move || turnManager.CurrentPlayer != PlayerId.PlayerA)
+        {
+            return true;
+        }
+
+        if (CanConfirmProvisionalMovement())
+        {
+            return true;
+        }
+
+        Debug.LogWarning("Cannot leave Move phase while provisional movement is invalid.");
+        return false;
     }
 
     private void BuildGrid()
@@ -181,7 +306,7 @@ public class GridManager : MonoBehaviour
 
     public bool PreviewMove(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
     {
-        if (ship == null)
+        if (match?.Result != null || ship == null || ship.movementLockedThisMove)
         {
             return false;
         }
@@ -214,7 +339,7 @@ public class GridManager : MonoBehaviour
     // Fails silently (with a log) if any validation check fails â€” no charge is spent.
     public bool DeployMine(ShipInstance ship)
     {
-        if (ship == null)
+        if (match?.Result != null || ship == null)
         {
             return false;
         }
@@ -320,7 +445,7 @@ public class GridManager : MonoBehaviour
     // Planes do NOT occupy tiles (they are airborne).
     public bool DeployPlane(ShipInstance ship, Vector2Int targetCell)
     {
-        if (ship == null)
+        if (match?.Result != null || ship == null)
         {
             return false;
         }
@@ -388,11 +513,13 @@ public class GridManager : MonoBehaviour
             return false;
         }
 
-        // All checks passed â€” deploy.
-        // Planes do NOT check for ship occupancy â€” they fly over ships.
+        // All checks passed — deploy.
+        // Planes do NOT check for ship occupancy — they fly over ships.
         PlaneUnit plane = new PlaneUnit(
             ship.owner, targetCell, planeProfile.fuelTurns,
-            planeProfile.movementRange, planeProfile.visionRange);
+            planeProfile.movementRange, planeProfile.visionRange,
+            ship, planeProfile.id);
+        plane.deployedThisTurn = true;
         match.planes.Add(plane);
 
         planeCharge.remaining--;
@@ -400,21 +527,36 @@ public class GridManager : MonoBehaviour
                   $"Launch distance: {minDist}. Fuel: {planeProfile.fuelTurns}. " +
                   $"Sorties remaining: {planeCharge.remaining}");
 
-        if (Fog != null && match != null)
-        {
-            Fog.RecomputeAllPassive(match);
-        }
+        RefreshPassiveVision();
 
         return true;
     }
 
-    // Previews a plane move during Move phase.
+    // Previews a plane move during Staging phase.
     // Validates Chebyshev distance from positionAtTurnStart.
     // Planes do not interact with tiles, exclusion zones, or other ships.
     public bool PreviewPlaneMove(PlaneUnit plane, Vector2Int candidatePosition)
     {
-        if (plane == null)
+        if (plane == null || match == null || match.Result != null || !match.planes.Contains(plane))
         {
+            return false;
+        }
+
+        if (turnManager != null && turnManager.CurrentPhase != Phase.Staging)
+        {
+            Debug.Log($"[PLANE] Move rejected: planes can only move in the Staging phase (current: {turnManager.CurrentPhase}).");
+            return false;
+        }
+
+        if (turnManager != null && plane.owner != turnManager.CurrentPlayer)
+        {
+            Debug.Log($"[PLANE] Move rejected: it is not {plane.owner}'s turn.");
+            return false;
+        }
+
+        if (plane.deployedThisTurn)
+        {
+            Debug.Log("[PLANE] Move rejected: planes cannot move on the turn they are deployed (movement is allowed in the next Staging phase).");
             return false;
         }
 
@@ -432,15 +574,96 @@ public class GridManager : MonoBehaviour
         }
 
         // Planes fly over everything â€” no terrain or occupancy check.
-        plane.position = candidatePosition;
+        planeMovePreviews[plane] = candidatePosition;
         return true;
     }
 
-    // Commits a plane move.
-    public void ConfirmPlaneMove(PlaneUnit plane)
+    public Vector2Int GetPlanePreviewPosition(PlaneUnit plane)
     {
-        if (plane == null) return;
+        if (plane == null) return default;
+        return planeMovePreviews.TryGetValue(plane, out Vector2Int preview)
+            ? preview : plane.position;
+    }
+
+    public void CancelPlaneMove(PlaneUnit plane)
+    {
+        if (plane != null) planeMovePreviews.Remove(plane);
+    }
+
+    // Commits a validated preview; live plane position and vision change together.
+    public bool ConfirmPlaneMove(PlaneUnit plane)
+    {
+        if (plane == null || match == null || match.Result != null || !match.planes.Contains(plane)) return false;
+        if (!planeMovePreviews.TryGetValue(plane, out Vector2Int preview)) return true;
+        if (turnManager == null || turnManager.CurrentPhase != Phase.Staging ||
+            turnManager.CurrentPlayer != plane.owner || plane.deployedThisTurn ||
+            !IsInBounds(preview) || DistanceBetween(plane.positionAtTurnStart, preview) > plane.movementRange)
+            return false;
+
+        plane.position = preview;
+        planeMovePreviews.Remove(plane);
+        RefreshPassiveVision();
         Debug.Log($"[PLANE] Plane move committed to {plane.position}.");
+        return true;
+    }
+
+    // Undeploys a plane that was deployed during the current Staging phase.
+    // Removes the plane from match.planes, refunds the sortie to the launch ship,
+    // and recomputes passive fog.
+    public bool UndeployPlane(PlaneUnit plane)
+    {
+        if (plane == null || match == null || match.Result != null)
+        {
+            return false;
+        }
+
+        if (turnManager != null && turnManager.CurrentPhase != Phase.Staging)
+        {
+            Debug.Log("[PLANE] Undeploy rejected: can only undeploy during Staging phase.");
+            return false;
+        }
+
+        if (turnManager != null && plane.owner != turnManager.CurrentPlayer)
+        {
+            Debug.Log($"[PLANE] Undeploy rejected: not {plane.owner}'s turn.");
+            return false;
+        }
+
+        if (!plane.deployedThisTurn)
+        {
+            Debug.Log("[PLANE] Undeploy rejected: plane was deployed on a previous turn and cannot be undeployed.");
+            return false;
+        }
+
+        if (!match.planes.Contains(plane))
+        {
+            return false;
+        }
+
+        match.planes.Remove(plane);
+        planeMovePreviews.Remove(plane);
+
+        // Refund sortie to launch ship
+        if (plane.launchedFrom != null)
+        {
+            foreach (ChargeState charge in plane.launchedFrom.planeCharges)
+            {
+                if (charge.profileId == plane.profileId)
+                {
+                    if (charge.maxCapacity == -1 || charge.remaining < charge.maxCapacity)
+                    {
+                        charge.remaining++;
+                    }
+                    Debug.Log($"[PLANE] Sortie refunded to {plane.launchedFrom.shipType}. Remaining: {charge.remaining}");
+                    break;
+                }
+            }
+        }
+
+        RefreshPassiveVision();
+
+        Debug.Log($"[PLANE] Plane at {plane.position} undeployed.");
+        return true;
     }
 
     // Checks whether the given ship is standing on any mines after moving.
@@ -484,11 +707,20 @@ public class GridManager : MonoBehaviour
 
         // Flat damage: bypasses armor and defenses per spec.
         ship.currentHealth -= totalDamage;
+        if (match.CurrentTurnSummary != null)
+        {
+            match.CurrentTurnSummary.MinesTriggered += triggered.Count;
+            match.CurrentTurnSummary.MineDamageTaken += totalDamage;
+        }
         Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} took {totalDamage} total mine damage. HP: {ship.currentHealth}/{ship.maxHealth}");
 
         if (ship.currentHealth <= 0)
         {
+            if (match.CurrentTurnSummary != null)
+                match.CurrentTurnSummary.ShipsLostToMines++;
             Debug.Log($"[MINE] {ship.owner}'s {ship.shipType} destroyed by mine(s)!");
+            // Clears passive and active fog marks for this ship so destroyed targets don't retain ghost contact markers.
+            Fog?.ClearMarksForShip(ship);
             RemoveShip(ship);
             match.GetPlayer(ship.owner).ships.Remove(ship);
         }
@@ -501,7 +733,7 @@ public class GridManager : MonoBehaviour
     // omits it and keeps the original hull-facing behavior unchanged.
     public bool ActivateActiveScan(ShipInstance ship, Vector2Int? preferredForward = null)
     {
-        if (ship == null || ship.owner != turnManager.CurrentPlayer)
+        if (match?.Result != null || ship == null || ship.owner != turnManager.CurrentPlayer)
         {
             return false;
         }
@@ -542,7 +774,7 @@ public class GridManager : MonoBehaviour
 
     public bool RotateActiveScan(int quarterTurns)
     {
-        if (activeScanPreview == null || quarterTurns == 0)
+        if (match?.Result != null || activeScanPreview == null || quarterTurns == 0)
         {
             return false;
         }
@@ -556,9 +788,25 @@ public class GridManager : MonoBehaviour
         return RotateActiveScan(quarterTurns);
     }
 
+    public bool SetActiveScanForward(Vector2Int forward)
+    {
+        if (match?.Result != null || activeScanPreview == null || forward == Vector2Int.zero)
+        {
+            return false;
+        }
+
+        activeScanPreview.SetForward(forward);
+        return true;
+    }
+
+    public bool SetActiveScanForward(ShipInstance ship, Vector2Int forward)
+    {
+        return SetActiveScanForward(forward);
+    }
+
     public bool ConfirmActiveScan()
     {
-        if (activeScanPreview == null || match == null)
+        if (activeScanPreview == null || match == null || match.Result != null)
         {
             return false;
         }
@@ -602,35 +850,13 @@ public class GridManager : MonoBehaviour
 
     public bool ConfirmProvisionalMovement()
     {
-        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        if (match?.Result != null) return false;
+        if (!TryGetConfirmedCells(out Dictionary<ShipInstance, List<Vector2Int>> candidateCells))
         {
-            if (!state.IsValid || !IsValidConfirmationFootprint(state))
-            {
-                return false;
-            }
+            return false;
         }
 
-        Dictionary<ShipInstance, List<Vector2Int>> candidateCells =
-            new Dictionary<ShipInstance, List<Vector2Int>>();
-        foreach (ProvisionalMovementState state in provisionalMoves.Values)
-        {
-            candidateCells[state.Ship] = state.GetPreviewCells();
-        }
-
-        foreach (KeyValuePair<ShipInstance, List<Vector2Int>> candidate in candidateCells)
-        {
-            foreach (Vector2Int cell in candidate.Value)
-            {
-                foreach (KeyValuePair<ShipInstance, List<Vector2Int>> other in candidateCells)
-                {
-                    if (candidate.Key != other.Key && other.Value.Contains(cell))
-                    {
-                        return false;
-                    }
-                }
-            }
-        }
-
+        bool hadSnapshots = provisionalMoves.Count > 0;
         foreach (ProvisionalMovementState state in provisionalMoves.Values)
         {
             RemoveShip(state.Ship);
@@ -654,6 +880,46 @@ public class GridManager : MonoBehaviour
         }
 
         provisionalMoves.Clear();
+        if (hadSnapshots) RefreshPassiveVision();
+        EvaluateMatchResult();
+        return true;
+    }
+
+    public bool CanConfirmProvisionalMovement()
+    {
+        return TryGetConfirmedCells(out _);
+    }
+
+    private bool TryGetConfirmedCells(out Dictionary<ShipInstance, List<Vector2Int>> candidateCells)
+    {
+        candidateCells = new Dictionary<ShipInstance, List<Vector2Int>>();
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            if (!state.IsValid || !IsValidConfirmationFootprint(state))
+            {
+                return false;
+            }
+        }
+
+        foreach (ProvisionalMovementState state in provisionalMoves.Values)
+        {
+            candidateCells[state.Ship] = state.GetPreviewCells();
+        }
+
+        foreach (KeyValuePair<ShipInstance, List<Vector2Int>> candidate in candidateCells)
+        {
+            foreach (Vector2Int cell in candidate.Value)
+            {
+                foreach (KeyValuePair<ShipInstance, List<Vector2Int>> other in candidateCells)
+                {
+                    if (candidate.Key != other.Key && other.Value.Contains(cell))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
         return true;
     }
 
@@ -733,6 +999,7 @@ public class GridManager : MonoBehaviour
 
     public void PlaceShip(ShipInstance ship, List<Vector2Int> cells)
     {
+        if (match?.Result != null) return;
         foreach (var cell in cells)
         {
             Debug.Assert(IsInBounds(cell), $"Cell {cell} is out of bounds. Check ship data.");
@@ -746,6 +1013,7 @@ public class GridManager : MonoBehaviour
 
     public void RemoveShip(ShipInstance ship)
     {
+        if (match?.Result != null) return;
         foreach (var tile in tiles.Values)
         {
             if (tile.Occupant == ship)
@@ -758,11 +1026,12 @@ public class GridManager : MonoBehaviour
 
     public bool CanPlaceShip(ShipInstance ship, Vector2Int candidateAnchor, int candidateRotation)
     {
+        if (ship == null || candidateRotation % 90 != 0) return false;
         List<Vector2Int> candidateCells = FootprintUtil.GetWorldCells(candidateAnchor, ship.footprintOffsets, candidateRotation);
 
         foreach (var cell in candidateCells)
         {
-            if (!IsInBounds(cell))
+            if (!IsInBounds(cell) || !IsTerrainPassable(cell))
             {
                 return false;
             }
@@ -785,6 +1054,7 @@ public class GridManager : MonoBehaviour
 
     public bool MoveShip(ShipInstance ship, Vector2Int newAnchor, int newRotationDegrees)
     {
+        if (match?.Result != null || ship == null || ship.movementLockedThisMove) return false;
         int distance = DistanceBetween(ship.anchorAtTurnStart, newAnchor);
         if (distance > ship.movementRange)
         {
@@ -803,24 +1073,52 @@ public class GridManager : MonoBehaviour
         ship.rotationDegrees = newRotationDegrees;
         PlaceShip(ship, ship.GetOccupiedCells());
         ResolveMinesFor(ship);
+        RefreshPassiveVision();
+        EvaluateMatchResult();
         return true;
     }
 
     private void HandlePhaseChanged(Phase newPhase)
     {
+        if (match?.Result != null) return;
         if (newPhase == Phase.Move)
         {
+            match?.BeginTurn(turnManager.CurrentPlayer);
             provisionalMoves.Clear();
             if (match != null)
             {
-                foreach (ShipInstance ship in turnManager.CurrentPlayer == PlayerId.PlayerA
-                    ? match.playerA.ships
-                    : match.playerB.ships)
+                foreach (ShipInstance ship in match.GetPlayer(turnManager.CurrentPlayer).ships)
                 {
-                    provisionalMoves[ship] = new ProvisionalMovementState(ship);
+                    ship.movementLockedThisMove = ship.skipNextMove;
+                    ship.skipNextMove = false;
                 }
+            }
+            if (match != null && turnManager.CurrentPlayer == PlayerId.PlayerA)
+            {
+                foreach (ShipInstance ship in match.playerA.ships)
+                {
+                    if (!ship.movementLockedThisMove)
+                        provisionalMoves[ship] = new ProvisionalMovementState(ship);
+                }
+            }
+        }
+        else if (newPhase == Phase.Staging)
+        {
+            planeMovePreviews.Clear();
+            if (turnManager.CurrentPlayer == PlayerId.PlayerA)
+            {
+                if (!ConfirmProvisionalMovement())
+                {
+                    Debug.LogWarning("Provisional movement confirmation failed; no ships were moved.");
+                }
+                if (match?.Result != null) return;
+            }
 
-                // Snapshot plane positions for movement range validation.
+            if (match != null)
+            {
+                foreach (ShipInstance ship in match.GetPlayer(turnManager.CurrentPlayer).ships)
+                    ship.movementLockedThisMove = false;
+                // Snapshot plane positions for movement range validation during Staging phase.
                 PlayerId actingPlayer = turnManager.CurrentPlayer;
                 foreach (PlaneUnit plane in match.planes)
                 {
@@ -831,22 +1129,34 @@ public class GridManager : MonoBehaviour
                 }
             }
         }
-        else if (newPhase == Phase.Staging)
-        {
-            if (!ConfirmProvisionalMovement())
-            {
-                Debug.LogWarning("Provisional movement confirmation failed; no ships were moved.");
-            }
-        }
         else if (newPhase == Phase.Search)
         {
+            planeMovePreviews.Clear();
+            if (match != null)
+            {
+                PlayerId actingPlayer = turnManager != null ? turnManager.CurrentPlayer : PlayerId.PlayerA;
+                foreach (PlaneUnit plane in match.planes)
+                {
+                    if (plane.owner == actingPlayer)
+                    {
+                        plane.deployedThisTurn = false;
+                    }
+                }
+            }
+
             // Passive vision remains automatic; active scans require player activation.
-            Fog.RecomputeAllPassive(match);
+            RefreshPassiveVision();
             activeScanPreview = null;
             fleetScannedThisPhase = false;
         }
+        else if (newPhase == Phase.Battle)
+        {
+            // Resets per-ship attack tracking so each living ship can make one attack this Battle phase.
+            ResetShipAttackStates();
+        }
         else if (newPhase == Phase.End)
         {
+            ResetShipAttackStates();
             Fog.ClearAllActiveMarks();
             activeScanPreview = null;
             fleetScannedThisPhase = false;
@@ -861,7 +1171,15 @@ public class GridManager : MonoBehaviour
 
                 foreach (ShipInstance ship in actingShips)
                 {
+                    int before = 0;
+                    foreach (ChargeState charge in ship.mineCharges)
+                        if (charge.remaining > 0) before += charge.remaining;
                     ship.TickRecharge();
+                    int after = 0;
+                    foreach (ChargeState charge in ship.mineCharges)
+                        if (charge.remaining > 0) after += charge.remaining;
+                    if (match.CurrentTurnSummary != null)
+                        match.CurrentTurnSummary.MineChargesRestored += after - before;
                 }
 
                 // Tick plane fuel for the acting player's planes.
@@ -876,16 +1194,32 @@ public class GridManager : MonoBehaviour
 
                     if (plane.fuelRemaining <= 0)
                     {
+                        if (match.CurrentTurnSummary != null)
+                            match.CurrentTurnSummary.PlanesExpired++;
                         match.planes.RemoveAt(i);
+                        planeMovePreviews.Remove(plane);
                         Debug.Log($"[PLANE] {plane.owner} plane at {plane.position} ran out of fuel and was removed.");
                     }
                 }
 
-                Fog.RecomputeAllPassive(match);
+                RefreshPassiveVision();
             }
+            FinishTurn(false);
         }
         // Staging: mine deployment is player-activated via DeployMine(ship).
         // Plane deployment is player-activated via DeployPlane(ship, cell).
     }
 
+    public void ResetShipAttackStates()
+    {
+        if (match == null) return;
+        foreach (ShipInstance ship in match.playerA.ships)
+        {
+            ship.hasAttackedThisPhase = false;
+        }
+        foreach (ShipInstance ship in match.playerB.ships)
+        {
+            ship.hasAttackedThisPhase = false;
+        }
+    }
 }
